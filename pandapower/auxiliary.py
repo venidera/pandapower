@@ -859,11 +859,11 @@ def _add_dcline_gens(net):
         pto = (pfrom * (1 - dctab.loss_percent / 100) - dctab.loss_mw)
         pmax = dctab.max_p_mw
         create_gen(net, bus=dctab.to_bus, p_mw=pto, vm_pu=dctab.vm_to_pu,
-                   min_p_mw=0, max_p_mw=pmax,
+                   min_p_mw=pto*0.99, max_p_mw=pto*1.01,
                    max_q_mvar=dctab.max_q_to_mvar, min_q_mvar=dctab.min_q_to_mvar,
                    in_service=dctab.in_service)
         create_gen(net, bus=dctab.from_bus, p_mw=-pfrom, vm_pu=dctab.vm_from_pu,
-                   min_p_mw=-pmax, max_p_mw=0,
+                   min_p_mw=-pfrom*1.01, max_p_mw=-pfrom*0.99,
                    max_q_mvar=dctab.max_q_from_mvar, min_q_mvar=dctab.min_q_from_mvar,
                    in_service=dctab.in_service)
 
