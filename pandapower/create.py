@@ -490,7 +490,7 @@ def create_empty_network(name="", f_hz=50., sn_mva=1, add_stdtypes=True):
 
     for s in net:
         if isinstance(net[s], list):
-            net[s] = pd.DataFrame(zeros(0, dtype=net[s]), index=pd.Int64Index([]))
+            net[s] = pd.DataFrame(zeros(0, dtype=net[s]), index=pd.Index([], dtype='int64'))
     if add_stdtypes:
         add_basic_std_types(net)
     else:
@@ -652,7 +652,8 @@ def create_buses(net, nr_buses, vn_kv, index=None, name=None, type="b", geodata=
         dd['max_vm_pu'] = dd['max_vm_pu'].astype(float)
 
     dd = dd.assign(**kwargs)
-    net["bus"] = net["bus"].append(dd)
+    net["bus"] = pd.concat([net["bus"], pd.DataFrame(dd)], ignore_index=True)
+    # net["bus"] = net["bus"].append(dd)
     return index
 
 
@@ -2612,7 +2613,9 @@ def create_transformer(net, hv_bus, lv_bus, std_type, name=None, tap_pos=nan, in
         net.trafo.loc[index, "max_loading_percent"] = float(max_loading_percent)
 
     # tap_phase_shifter default False
-    net.trafo.tap_phase_shifter.fillna(False, inplace=True)
+    pd.set_option('future.no_silent_downcasting', True)
+    # net.trafo.tap_phase_shifter.fillna(False, inplace=True)
+    net.trafo.fillna({"tap_phase_shifter":False}, inplace=True)
 
     # and preserve dtypes
     _preserve_dtypes(net.trafo, dtypes)
@@ -3058,11 +3061,16 @@ def create_transformer3w(net, hv_bus, mv_bus, lv_bus, std_type, name=None, tap_p
 
     dd = pd.DataFrame(v, index=[index])
     if version.parse(pd.__version__) < version.parse("0.21"):
-        net["trafo3w"] = net["trafo3w"].append(dd).reindex_axis(net["trafo3w"].columns, axis=1)
+        # net["trafo3w"] = net["trafo3w"].append(dd).reindex_axis(net["trafo3w"].columns, axis=1)
+        net["trafo3w"] = pd.concat([net["trafo3w"], dd], ignore_index=True).reindex_axis(net["trafo3w"].columns, axis=1)
+        
     elif version.parse(pd.__version__) < version.parse("0.23"):
-        net["trafo3w"] = net["trafo3w"].append(dd).reindex(net["trafo3w"].columns, axis=1)
+        # net["trafo3w"] = net["trafo3w"].append(dd).reindex(net["trafo3w"].columns, axis=1)
+        net["trafo3w"] = pd.concat([net["trafo3w"], pd.DataFrame(dd)], ignore_index=True).reindex(net["trafo3w"].columns, axis=1)
     else:
-        net["trafo3w"] = net["trafo3w"].append(dd, sort=True).reindex(net["trafo3w"].columns, axis=1)
+        # net["trafo3w"] = net["trafo3w"].append(dd, sort=True).reindex(net["trafo3w"].columns, axis=1)
+        net["trafo3w"] = pd.concat([net["trafo3w"], pd.DataFrame(dd)], ignore_index=True,
+                                   sort=True).reindex(net["trafo3w"].columns, axis=1)
 
     if not isnan(max_loading_percent):
         if "max_loading_percent" not in net.trafo3w.columns:

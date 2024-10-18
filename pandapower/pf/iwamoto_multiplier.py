@@ -1,5 +1,5 @@
 from numpy import roots, conj, r_
-from numpy.core.umath import exp
+from numpy._core.umath import exp
 
 
 def _iwamoto_step(Ybus, J, F, dx, pq, npv, npq, dVa, dVm, Vm, Va, pv, j1, j2, j3, j4, j5, j6):

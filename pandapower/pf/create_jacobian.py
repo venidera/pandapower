@@ -1,5 +1,5 @@
 from numpy import complex128, float64, int32
-from numpy.core.multiarray import zeros, empty, array
+from numpy._core.multiarray import zeros, empty, array
 from scipy.sparse import csr_matrix as sparse, vstack, hstack
 
 from pandapower.pypower.dSbus_dV import dSbus_dV
