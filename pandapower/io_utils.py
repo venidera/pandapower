@@ -11,6 +11,7 @@ import pickle
 import sys
 import types
 import weakref
+import io
 from functools import partial
 from inspect import isclass, signature, _findclass
 from warnings import warn
@@ -402,7 +403,7 @@ class FromSerializableRegistry():
 
     @from_serializable.register(class_name='DataFrame', module_name='pandas.core.frame')
     def DataFrame(self):
-        df = pd.read_json(self.obj, precise_float=True, convert_axes=False, **self.d)
+        df = pd.read_json(io.StringIO(self.obj), precise_float=True, convert_axes=False, **self.d)
         try:
             df.set_index(df.index.astype(numpy.int64), inplace=True)
         except (ValueError, TypeError, AttributeError):

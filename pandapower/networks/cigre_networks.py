@@ -4,6 +4,7 @@
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
+import io
 from pandas import read_json
 from numpy import nan
 import pandapower as pp
@@ -283,10 +284,10 @@ def create_cigre_network_mv(with_der=False):
                            name='Residential fuel cell 2', type='Residential fuel cell')
 
     # Bus geo data
-    net_cigre_mv.bus_geodata = read_json(
+    net_cigre_mv.bus_geodata = read_json(io.StringIO(
         """{"x":{"0":7.0,"1":4.0,"2":4.0,"3":4.0,"4":2.5,"5":1.0,"6":1.0,"7":8.0,"8":8.0,"9":6.0,
         "10":4.0,"11":4.0,"12":10.0,"13":10.0,"14":10.0},"y":{"0":16,"1":15,"2":13,"3":11,"4":9,
-        "5":7,"6":3,"7":3,"8":5,"9":5,"10":5,"11":7,"12":15,"13":11,"14":5}}""")
+        "5":7,"6":3,"7":3,"8":5,"9":5,"10":5,"11":7,"12":15,"13":11,"14":5}}"""))
     # Match bus.index
     net_cigre_mv.bus_geodata = net_cigre_mv.bus_geodata.loc[net_cigre_mv.bus.index]
     return net_cigre_mv

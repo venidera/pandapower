@@ -30,7 +30,7 @@ import copy
 from collections.abc import MutableMapping
 
 import numpy as np
-import numpy.core.numeric as ncn
+import numpy._core.numeric as ncn
 import pandas as pd
 import scipy as sp
 import six

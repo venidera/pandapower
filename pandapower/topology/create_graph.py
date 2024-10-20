@@ -127,7 +127,7 @@ def create_nxgraph(net, respect_switches=True, include_lines=True, include_imped
             mask = (net.switch.et.values == "l") & open_sw
             if mask.any():
                 open_lines = net.switch.element.values[mask]
-                open_lines_mask = np.in1d(indices[:, INDEX], open_lines)
+                open_lines_mask = np.isin(indices[:, INDEX], open_lines)
                 in_service &= ~open_lines_mask
 
         parameter[:, WEIGHT] = line.length_km.values

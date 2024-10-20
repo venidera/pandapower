@@ -623,8 +623,8 @@ def _branches_with_oos_buses(net, ppc):
         t_bus = line_buses[:, 1]
 
         # determine on which side of the line the oos bus is located
-        mask_from = np.in1d(f_bus, bus_oos)
-        mask_to = np.in1d(t_bus, bus_oos)
+        mask_from = np.isin(f_bus, bus_oos)
+        mask_to = np.isin(t_bus, bus_oos)
 
         mask_and = mask_to & mask_from
         if np.any(mask_and):

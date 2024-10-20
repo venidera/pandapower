@@ -186,8 +186,8 @@ def create_bus_lookup(net, bus_index, bus_is_idx, gen_is_mask, eg_is_mask, numba
         # if there are any closed bus-bus switches find them
         closed_bb_switch_mask = ((net["switch"]["closed"].values == True) &
                                  (net["switch"]["et"].values == "b") &
-                                 np.in1d(net["switch"]["bus"].values, bus_is_idx) &
-                                 np.in1d(net["switch"]["element"].values, bus_is_idx))
+                                 np.isin(net["switch"]["bus"].values, bus_is_idx) &
+                                 np.isin(net["switch"]["element"].values, bus_is_idx))
 
     if switches_with_pos_z_ohm.any():
         net._impedance_bb_switches = closed_bb_switch_mask & switches_with_pos_z_ohm
@@ -525,8 +525,9 @@ def _add_ext_grid_sc_impedance(net, ppc):
 
     z_grid = c / s_sc
     if mode == 'pf_3ph':
-        z_grid = c / (s_sc/3)  # 3 phase power divided to get 1 ph power                        
-    x_grid = z_grid / np.sqrt(rx ** 2 + 1)
+        z_grid = c / (s_sc/3)  # 3 phase power divided to get 1 ph power  
+    temp = rx ** 2 + 1
+    x_grid = z_grid / [np.sqrt(temp[0])]
     r_grid = rx * x_grid
     eg["r"] = r_grid
     eg["x"] = x_grid

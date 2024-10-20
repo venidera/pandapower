@@ -634,14 +634,14 @@ def create_buses(net, nr_buses, vn_kv, index=None, name=None, type="b", geodata=
 
     if geodata is not None:
         # works with a 2-tuple or a matching array
-        net.bus_geodata = net.bus_geodata.append(pd.DataFrame(
+        net.bus_geodata = pd.concat([net.bus_geodata, pd.DataFrame(
             zeros((len(index), len(net.bus_geodata.columns)), dtype=int), index=index,
-            columns=net.bus_geodata.columns))
+            columns=net.bus_geodata.columns)], ignore_index=True)
         net.bus_geodata.loc[index, :] = nan
         net.bus_geodata.loc[index, ["x", "y"]] = geodata
     if coords is not None:
-        net.bus_geodata = net.bus_geodata.append(pd.DataFrame(index=index,
-                                                              columns=net.bus_geodata.columns))
+        net.bus_geodata = pd.concat([net.bus_geodata, pd.DataFrame(
+            index=index,columns=net.bus_geodata.columns)], ignore_index=True)
         net["bus_geodata"].loc[index, "coords"] = coords
 
     if min_vm_pu is not None:
@@ -1017,7 +1017,7 @@ def create_loads(net, buses, p_mw, q_mvar=0, const_z_percent=0, const_i_percent=
 
     # and preserve dtypes
     dd = dd.assign(**kwargs)
-    net["load"] = net["load"].append(dd)
+    net["load"] = pd.concat([net["load"], pd.DataFrame(dd)], ignore_index=True)
 
     _preserve_dtypes(net.load, dtypes)
     return index
@@ -1311,7 +1311,7 @@ def create_sgens(net, buses, p_mw, q_mvar=0, sn_mva=nan, name=None, index=None,
         dd["rx"] = dd["rx"].astype(float)
 
     dd = dd.assign(**kwargs)
-    net["sgen"] = net["sgen"].append(dd)
+    net["sgen"] = pd.concat([net["sgen"],pd.DataFrame(dd)], ignore_index=True)
 
     # and preserve dtypes
     _preserve_dtypes(net.sgen, dtypes)
@@ -1810,7 +1810,7 @@ def create_gens(net, buses, p_mw, vm_pu=1., sn_mva=nan, name=None, index=None, m
 
     # and preserve dtypes
     dd = dd.assign(**kwargs)
-    net["gen"] = net["gen"].append(dd)
+    net["gen"] = pd.concat([net["gen"], pd.DataFrame(dd)], ignore_index=True)
 
     _preserve_dtypes(net.gen, dtypes)
 
@@ -2348,10 +2348,10 @@ def create_lines_from_parameters(net, from_buses, to_buses, length_km, r_ohm_per
 
     # extend the lines by the frame we just created
     if version.parse(pd.__version__) >= version.parse("0.23"):
-        net["line"] = net["line"].append(dd, sort=False)
+        net["line"] = pd.concat([net["line"], pd.DataFrame(dd)], sort=False, ignore_index=True)
     else:
         # prior to pandas 0.23 there was no explicit parameter (instead it was standard behavior)
-        net["line"] = net["line"].append(dd)
+        net["line"] = pd.concat([net["line"], pd.DataFrame(dd)], ignore_index=True)
 
     _preserve_dtypes(net.line, dtypes)
 
@@ -2367,10 +2367,11 @@ def create_lines_from_parameters(net, from_buses, to_buses, length_km, r_ohm_per
             df["coords"] = geodata
 
         if version.parse(pd.__version__) >= version.parse("0.23"):
-            net.line_geodata = net.line_geodata.append(df, sort=False)
+            net.line_geodata = pd.concat([net.line_geodata, pd.DataFrame(df)], sort=False,
+                                         ignore_index=True)
         else:
             # prior to pandas 0.23 there was no explicit parameter (instead it was standard behavior)
-            net.line_geodata = net.line_geodata.append(df)
+            net.line_geodata = pd.concat([net.line_geodata, pd.DataFrame(df)], ignore_index=True)
 
         _preserve_dtypes(net.line_geodata, dtypes)
 
@@ -2462,7 +2463,7 @@ def create_lines(net, from_buses, to_buses, length_km, std_type, name=None, inde
 
     # extend the lines by the frame we just created
     if version.parse(pd.__version__) >= version.parse("0.23"):
-        net["line"] = net["line"].append(dd, sort=False)
+        net["line"] = pd.concat([net["line"], pd.DataFrame(dd)], sort=False, ignore_index=True)
     else:
         # prior to pandas 0.23 there was no explicit parameter (instead it was standard behavior)
         net["line"] = net["line"].append(dd)
@@ -2491,10 +2492,10 @@ def create_lines(net, from_buses, to_buses, length_km, std_type, name=None, inde
             df["coords"] = geodata
 
         if version.parse(pd.__version__) >= version.parse("0.23"):
-            net.line_geodata = net.line_geodata.append(df, sort=False)
+            net.line_geodata = pd.concat([net.line_geodata, pd.DataFrame(df)], sort=False, ignore_index=True)
         else:
             # prior to pandas 0.23 there was no explicit parameter (instead it was standard behavior)
-            net.line_geodata = net.line_geodata.append(df)
+            net.line_geodata = pd.concat([net.line_geodata, pd.DataFrame(df)], ignore_index=True)
 
         _preserve_dtypes(net.line_geodata, dtypes)
 
@@ -2960,7 +2961,7 @@ def create_transformers_from_parameters(net, hv_buses, lv_buses, sn_mva, vn_hv_k
     for label, value in kwargs.items():
         new_trafos[label] = value
 
-    net["trafo"] = net["trafo"].append(new_trafos)
+    net["trafo"] = pd.concat([net["trafo"], pd.DataFrame(new_trafos)], ignore_index=True)
     # and preserve dtypes
     _preserve_dtypes(net.trafo, dtypes)
 
@@ -3363,7 +3364,7 @@ def create_transformers3w_from_parameters(net, hv_buses, mv_buses, lv_buses, vn_
     # store dtypes
     dtypes = net.trafo3w.dtypes
 
-    net["trafo3w"] = net["trafo3w"].append(new_trafos)
+    net["trafo3w"] = pd.concat([net["trafo3w"], pd.DataFrame(new_trafos)], ignore_index=True)
 
     # and preserve dtypes
     _preserve_dtypes(net.trafo3w, dtypes)
@@ -3566,7 +3567,7 @@ def create_switches(net, buses, elements, et, closed=True, type=None, name=None,
     # store dtypes
     dtypes = net.switch.dtypes
 
-    net['switch'] = net['switch'].append(switches_df)
+    net['switch'] = pd.concat([net['switch'], switches_df], ignore_index=True)
 
     # and preserve dtypes
     _preserve_dtypes(net.switch, dtypes)
