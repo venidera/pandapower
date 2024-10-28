@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2023 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
@@ -32,7 +32,7 @@ def connected_component(mg, bus, notravbuses=[]):
     EXAMPLE:
          import pandapower.topology as top
 
-         mg = top.create_nx_graph(net)
+         mg = top.create_nxgraph(net)
 
          cc = top.connected_component(mg, 5)
 
@@ -59,7 +59,7 @@ def connected_components(mg, notravbuses=set()):
 
      OPTIONAL:
      **notravbuses** (set) - Indices of notravbuses: lines connected to these buses are
-                                       not being considered in the graph
+     not being considered in the graph
 
      OUTPUT:
         **cc** (generator) - Returns a generator that yields all clusters of buses connected
@@ -68,9 +68,9 @@ def connected_components(mg, notravbuses=set()):
      EXAMPLE:
          import pandapower.topology as top
 
-         mg = top.create_nx_graph(net)
+         mg = top.create_nxgraph(net)
 
-         cc = top.connected_components(net, 5)
+         cc = top.connected_components(mg, 5)
 
     """
 
@@ -87,7 +87,7 @@ def connected_components(mg, notravbuses=set()):
 
 
 def calc_distance_to_bus(net, bus, respect_switches=True, nogobuses=None,
-                         notravbuses=None, weight='weight'):
+                         notravbuses=None, weight='weight', g=None):
     """
         Calculates the shortest distance between a source bus and all buses connected to it.
 
@@ -98,15 +98,19 @@ def calc_distance_to_bus(net, bus, respect_switches=True, nogobuses=None,
 
 
      OPTIONAL:
-        **respect_switches** (boolean, True) - True: open line switches are being considered
-                                                     (no edge between nodes)
-                                               False: open line switches are being ignored
+        **respect_switches** (boolean, True)
 
-        **nogobuses** (integer/list, None) - nogobuses are not being considered
+            True: open line switches are being considered (no edge between nodes).
 
-        **notravbuses** (integer/list, None) - lines connected to these buses are not being
-                                              considered
-        **weight** (string, None) – Edge data key corresponding to the edge weight
+            False: open line switches are being ignored.
+
+        **nogobuses** (integer/list, None) - nogobuses are not being considered.
+
+        **notravbuses** (integer/list, None) - lines connected to these buses are not being considered.
+
+        **weight** (string, None) – Edge data key corresponding to the edge weight.
+
+        **g** (nx.MultiGraph, None) – MultiGraph of the network. If None, the graph will be created.
 
      OUTPUT:
         **dist** - Returns a pandas series with containing all distances to the source bus
@@ -118,14 +122,16 @@ def calc_distance_to_bus(net, bus, respect_switches=True, nogobuses=None,
          dist = top.calc_distance_to_bus(net, 5)
 
     """
-    g = create_nxgraph(net, respect_switches=respect_switches,
-                       nogobuses=nogobuses, notravbuses=notravbuses)
+    if g is None:
+        g = create_nxgraph(net, respect_switches=respect_switches, nogobuses=nogobuses,
+                           notravbuses=notravbuses)
     return pd.Series(nx.single_source_dijkstra_path_length(g, bus, weight=weight))
 
 
 def unsupplied_buses(net, mg=None, slacks=None, respect_switches=True):
     """
-     Finds buses, that are not connected to an external grid.
+     Finds buses, that are not connected electrically (no lines, trafos etc or if respect_switches
+     is True only connected via open switches) to an external grid and that are in service.
 
      INPUT:
         **net** (pandapowerNet) - variable that contains a pandapower network
@@ -153,8 +159,9 @@ def unsupplied_buses(net, mg=None, slacks=None, respect_switches=True):
 
     mg = mg or create_nxgraph(net, respect_switches=respect_switches)
     if slacks is None:
-        slacks = set(net.ext_grid[net.ext_grid.in_service].bus.values) | set(
-            net.gen[net.gen.in_service & net.gen.slack].bus.values)
+        slacks = (set(net.ext_grid[net.ext_grid.in_service].bus.values) |
+                  set(net.gen[net.gen.in_service & net.gen.slack].bus.values) |
+                  set(net.vsc[net.vsc.in_service & (net.vsc.control_mode_ac == "slack")].bus.values))
     not_supplied = set()
     for cc in nx.connected_components(mg):
         if not set(cc) & slacks:
