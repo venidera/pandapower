@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 import copy
@@ -16,7 +16,7 @@ from pandapower.timeseries.output_writer import OutputWriter
 from pandapower.timeseries.run_time_series import run_timeseries
 
 try:
-    import pplog
+    import pandaplan.core.pplog as pplog
 except:
     import logging as pplog
 
@@ -26,20 +26,22 @@ logger.setLevel(pplog.CRITICAL)
 
 
 class DummyController(Controller):
-    def __init__(self, net, in_service=True, level=0, order=0):
-        matching_params = {'level': level, 'order': order}
+    def __init__(self, net, in_service=True, level=0, order=0, drop_same_existing_ctrl=False,
+                 matching_params=None):
+        if matching_params is None:
+            matching_params = {'level': level, 'order': order}
         super().__init__(net, in_service=in_service, level=level, order=order,
+                         drop_same_existing_ctrl=drop_same_existing_ctrl,
                          matching_params=matching_params)
-        self.matching_params = matching_params
         self.applied = False
 
-    def initialize_control(self):
+    def initialize_control(self, net):
         self.applied = False
 
-    def control_step(self):
+    def control_step(self, net):
         self.applied = True
 
-    def is_converged(self):
+    def is_converged(self, net):
         return self.applied
 
 
@@ -66,7 +68,7 @@ def test_add_get_controller(net):
         def control_step(self, net):
             pass
 
-        def is_converged(self):
+        def is_converged(self, net):
             return True
 
     # creating a test controller
@@ -83,20 +85,20 @@ def test_ctrl_unconverged(net):
         def __init__(self, net):
             super().__init__(net)
 
-        def time_step(self, time):
+        def time_step(self, net, time):
             self.convergent = True if time % 2 == 0 else False
 
-        def is_converged(self):
+        def is_converged(self, net):
             return self.convergent
 
     DivergentController(net)
 
     with pytest.raises(ct.ControllerNotConverged):
-        run_timeseries(net, time_steps=range(0, 3), output_writer=output_writer, max_iter=3)
+        run_timeseries(net, time_steps=range(0, 3), output_writer=output_writer, max_iter=3, verbose=False)
 
     # assert no exceptions but appropriate output in outputwriter
     run_timeseries(net, time_steps=range(0, 3), output_writer=output_writer, max_iter=3,
-                   continue_on_divergence=True)
+                   continue_on_divergence=True, verbose=False)
 
     for i, out in enumerate(output_writer.output["Parameters"].controller_unstable):
         if i % 2 == 0:
@@ -123,30 +125,30 @@ def test_in_service_bool(net):
     # make sure fails with something other than bool
     with pytest.raises(KeyError):
         cnet = copy.deepcopy(net)
-        TrafoController(cnet, 0, side="lv", trafotype="2W", level=1, in_service="True", tol=1e-6)
+        TrafoController(cnet, 0, side="lv", element="trafo", level=1, in_service="True", tol=1e-6)
         pp.runpp(cnet, run_control=True)
     with pytest.raises(KeyError):
         cnet = copy.deepcopy(net)
-        TrafoController(cnet, 0, side="lv", trafotype="2W", level=1, in_service=1.0, tol=1e-6)
+        TrafoController(cnet, 0, side="lv", element="trafo", level=1, in_service=1.0, tol=1e-6)
         pp.runpp(cnet, run_control=True)
     with pytest.raises(TypeError):
         cnet = copy.deepcopy(net)
-        TrafoController(cnet, 0, side="lv", trafotype="2W", level=1, in_service=[1, 2, 3], tol=1e-6)
+        TrafoController(cnet, 0, side="lv", element="trafo", level=1, in_service=[1, 2, 3], tol=1e-6)
         pp.runpp(cnet, run_control=True)
 
 
 def test_multiple_levels(net):
-    TrafoController(net, 0, side="lv", trafotype="2W", level=1, tol=1e-6, in_service=True)
+    TrafoController(net, 0, side="lv", element="trafo", level=1, tol=1e-6, in_service=True)
     Controller(net, gid=2, level=[1, 2])
     Controller(net, gid=2, level=[1, 2])
-    level, order = get_controller_order(net)
+    level, order = get_controller_order(net, net.controller)
     # three levels with unspecific controller order => in order of appearance
     # assert order == [[0, 1], [1,2]]
     assert len(order) == 2
-    assert order[0][0].index == 0
-    assert order[0][1].index == 1
-    assert order[1][0].index == 1
-    assert order[1][1].index == 2
+    assert order[0][0][0].index == 0
+    assert order[0][1][0].index == 1
+    assert order[1][0][0].index == 1
+    assert order[1][1][0].index == 2
 
     assert level == [1, 2]
     pp.runpp(net, run_control=True)
@@ -159,9 +161,9 @@ def test_level(net):
 
     pp.runpp(net, run_control=True)
 
-    assert c1.is_converged()
-    assert c2.is_converged()
-    assert c3.is_converged()
+    assert c1.is_converged(net)
+    assert c2.is_converged(net)
+    assert c3.is_converged(net)
 
 
 def test_level_in_service(net):
@@ -177,13 +179,32 @@ def test_level_in_service(net):
     assert c3.applied
     assert not c4.applied
 
-    level, order = get_controller_order(net)
+    level, order = get_controller_order(net, net.controller)
 
     assert len(level) == 2
     assert len(order[0]) == 0
     assert len(order[1]) == 2
-    assert order[1][0] == c3 and order[1][1] == c2
+    assert order[1][0][0] == c3 and order[1][1][0] == c2
+
+
+def test_matching_params(net):
+    c0 = DummyController(net)
+    c1 = DummyController(net, order=1, drop_same_existing_ctrl=True)
+    assert not len(net.controller.index.difference([0, 1]))
+    c2 = DummyController(net, drop_same_existing_ctrl=True)
+    assert not len(net.controller.index.difference([1, 2]))
+    c3 = DummyController(net, matching_params={"level": 0, "order": 0, "in_service": True},
+                         drop_same_existing_ctrl=True)
+    assert not len(net.controller.index.difference([1, 3]))
+    assert net.controller.object.at[3] is not c2
+    assert net.controller.object.at[3] is c3
+    assert c2 not in net.controller.object.values
+    c4 = DummyController(net, in_service=False, drop_same_existing_ctrl=True,
+                         matching_params={"level": 0, "order": 0, "in_service": False})
+    assert not len(net.controller.index.difference([1, 3, 4]))
+    assert net.controller.object.at[3] is c3
+    assert net.controller.object.at[4] is c4
 
 
 if __name__ == '__main__':
-    pytest.main(['-s', __file__])
+    pytest.main([__file__, "-xs"])
