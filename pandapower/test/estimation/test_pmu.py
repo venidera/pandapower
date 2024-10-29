@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 import numpy as np
@@ -19,7 +19,7 @@ def run_se_lp_verify(net):
 
 
 def test_pmu_case14():
-    net = nw.case14()
+    net = nw.case9()
 
     pp.runpp(net)
     add_virtual_pmu_meas_from_loadflow(net)
