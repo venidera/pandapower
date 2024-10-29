@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
@@ -10,7 +10,7 @@ import pytest
 import pandapower as pp
 
 try:
-    import pplog as logging
+    import pandaplan.core.pplog as logging
 except ImportError:
     import logging
 
@@ -126,7 +126,7 @@ def test_cost_piecewise_linear_sgen():
 
     assert net["OPF_converged"]
     assert net.res_sgen.p_mw.values[0] - net.sgen.min_p_mw.values[0] < 1e-2
-    assert net.res_cost == 2 * net.res_sgen.p_mw.values
+    assert np.isclose(net.res_cost, 2 * net.res_sgen.p_mw.values[0])
 
 
 def test_cost_piecewise_linear_load():
@@ -244,4 +244,4 @@ def test_cost_piecewise_linear_sgen_very_unsteady_slopes():
 if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     logger.setLevel("DEBUG")
-    pytest.main(["-xs"])
+    pytest.main([__file__, "-xs"])

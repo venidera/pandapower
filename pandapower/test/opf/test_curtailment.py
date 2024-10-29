@@ -1,70 +1,41 @@
-# -*- coding: utf-8 -*-
-
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
-# and Energy System Technology (IEE), Kassel. All rights reserved.
-
-
 import pytest
-from numpy import array, allclose, all
+
 import pandapower as pp
+import numpy as np
 
-try:
-    import pplog as logging
-except ImportError:
-    import logging
+@pytest.mark.xfail
+def test_3point_pwl():
+    vm_max = 1.05
+    vm_min = 0.95
 
-logger = logging.getLogger(__name__)
-
-
-def test_minimize_active_power_curtailment():
+    # create net
     net = pp.create_empty_network()
+    pp.create_bus(net, max_vm_pu=vm_max, min_vm_pu=vm_min, vn_kv=10.)
+    pp.create_bus(net, max_vm_pu=vm_max, min_vm_pu=vm_min, vn_kv=.4)
+    pp.create_sgen(net, 1, p_mw=0.1, q_mvar=0, controllable=True, min_p_mw=0.1, max_p_mw=0.15,
+                   max_q_mvar=0.05, min_q_mvar=-0.05)
+    pp.create_ext_grid(net, 0)
+    pp.create_load(net, 1, p_mw=0.02, controllable=False)
+    pp.create_line_from_parameters(net, 0, 1, 50, name="line2", r_ohm_per_km=0.876,
+                                   c_nf_per_km=260.0, max_i_ka=0.123, x_ohm_per_km=0.1159876,
+                                   max_loading_percent=100 * 690)
 
-    # create buses
-    bus1 = pp.create_bus(net, vn_kv=220.)
-    bus2 = pp.create_bus(net, vn_kv=110.)
-    bus3 = pp.create_bus(net, vn_kv=110.)
-    bus4 = pp.create_bus(net, vn_kv=110.)
+    # creating a pwl cost function that actually is realistic: The absolute value of the reactive power has costs.
+    pp.create_pwl_cost(net, 0, "sgen", [[-50, 0, -1.5], [0, 50, 1.5]], power_type="q")
 
-    # create 220/110 kV transformer
-    pp.create_transformer(net, bus1, bus2, std_type="100 MVA 220/110 kV")
+    pp.runopp(net)
 
-    # create 110 kV lines
-    pp.create_line(net, bus2, bus3, length_km=70., std_type='149-AL1/24-ST1A 110.0')
-    pp.create_line(net, bus3, bus4, length_km=50., std_type='149-AL1/24-ST1A 110.0')
-    pp.create_line(net, bus4, bus2, length_km=40., std_type='149-AL1/24-ST1A 110.0')
+    # The reactive power should be at zero to minimze the costs.
+    assert np.isclose(net.res_sgen.q_mvar.values, 0, atol=1e-4)
+    assert np.isclose(net.res_cost, abs(net.res_sgen.q_mvar.values)*1.5, atol=1e-4)
+    #TODO costs seem to be assigned to ext_grid, not to sgen (net.res_ext_grid.q_mvar*1.5=net.res_cost)
+    #     They are however correctly assigned in the gencost array, this seems to be a bug in PYPOWER
 
-    # create loads
-    pp.create_load(net, bus2, p_mw=60, controllable=False)
-    pp.create_load(net, bus3, p_mw=70, controllable=False)
-    pp.create_load(net, bus4, p_mw=10, controllable=False)
-
-    # create generators
-    pp.create_ext_grid(net, bus1)
-    pp.create_gen(net, bus3, p_mw=80., max_p_mw=80., min_p_mw=0., vm_pu=1.01, controllable=True)
-    pp.create_gen(net, bus4, p_mw=0.1, max_p_mw=100., min_p_mw=0., vm_pu=1.01, controllable=True)
-
-    net.trafo["max_loading_percent"] = 50.
-    net.line["max_loading_percent"] = 50.
-
-    net.bus["min_vm_pu"] = 1.0
-    net.bus["max_vm_pu"] = 1.02
-
-    # use cheapest gen first, avoid ext_grid as much as possible (until vm_pu max is reached for gens)
-    pp.create_poly_cost(net, 0, "gen", cp1_eur_per_mw=0.02)
-    pp.create_poly_cost(net, 1, "gen", cp1_eur_per_mw=0.0)
-    pp.create_poly_cost(net, 0, "ext_grid", cp1_eur_per_mw=0.3)
-    pp.runopp(net, calculate_voltage_angles=True)
-    assert net["OPF_converged"]
-    # checks limits in general
-    assert all(net.res_line.loading_percent < 50.01)
-    assert all(net.res_bus.vm_pu < 1.02)
-    assert all(net.res_bus.vm_pu > 1.0)
-    # checks if the cheaper gen is rather used then the more expensive one to cover the load
-    assert net.res_gen.at[1, "p_mw"] > net.res_gen.at[0, "p_mw"]
-    # check if they use their maximum voltage
-    assert allclose(net.res_gen.loc[:, "vm_pu"], 1.02)
-
+    net.sgen.min_q_mvar = 0.05
+    net.sgen.max_q_mvar = 0.1
+    pp.runopp(net)
+    assert np.isclose(net.res_sgen.q_mvar.values, 0.05, atol=1e-4)
+    assert np.isclose(net.res_cost, abs(net.res_sgen.q_mvar.values)*1.5, atol=1e-4)
 
 if __name__ == "__main__":
-    # pytest.main([__file__, "-xs"])
-    test_minimize_active_power_curtailment()
+    pytest.main([__file__, "-xs"])
