@@ -1,822 +1,1787 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
+# Additional copyright for modified code by Brendan Curran-Johnson (ADict class):
+# Copyright (c) 2013 Brendan Curran-Johnson
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+# (https://github.com/bcj/AttrDict/blob/master/LICENSE.txt)
+
+import copy
+from collections.abc import MutableMapping
+import warnings
+from importlib.metadata import version as version_str
+from importlib.metadata import PackageNotFoundError
+from typing_extensions import deprecated
+
 import numpy as np
-import pandapower as pp
-import pytest
-
 import pandas as pd
-pd.set_option('display.max_rows', 500)
-pd.set_option('display.max_columns', 500)
-pd.set_option('display.width', 1000)
-
-
-def test_convenience_create_functions():
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 110.)
-    b2 = pp.create_bus(net, 110.)
-    b3 = pp.create_bus(net, 20)
-    pp.create_ext_grid(net, b1)
-    pp.create_line_from_parameters(net, b1, b2, length_km=20., r_ohm_per_km=0.0487,
-                                   x_ohm_per_km=0.1382301, c_nf_per_km=160., max_i_ka=0.664)
-
-    l0 = pp.create_load_from_cosphi(net, b2, 10, 0.95, "ind", name="load")
-    pp.runpp(net, init="flat")
-    assert net.load.p_mw.at[l0] == 9.5
-    assert net.load.q_mvar.at[l0] > 0
-    assert np.sqrt(net.load.p_mw.at[l0] ** 2 + net.load.q_mvar.at[l0] ** 2) == 10
-    assert np.isclose(net.res_bus.vm_pu.at[b2], 0.99990833838)
-    assert net.load.name.at[l0] == "load"
-
-    sh0 = pp.create_shunt_as_capacitor(net, b2, 10, loss_factor=0.01, name="shunt")
-    pp.runpp(net, init="flat")
-    assert np.isclose(net.res_shunt.q_mvar.at[sh0], -10.043934174)
-    assert np.isclose(net.res_shunt.p_mw.at[sh0], 0.10043933665)
-    assert np.isclose(net.res_bus.vm_pu.at[b2], 1.0021942964)
-    assert net.shunt.name.at[sh0] == "shunt"
-
-    sg0 = pp.create_sgen_from_cosphi(net, b2, 5, 0.95, "cap", name="sgen")
-    pp.runpp(net, init="flat")
-    assert np.sqrt(net.sgen.p_mw.at[sg0] ** 2 + net.sgen.q_mvar.at[sg0] ** 2) == 5
-    assert net.sgen.p_mw.at[sg0] == 4.75
-    assert net.sgen.q_mvar.at[sg0] > 0
-    assert np.isclose(net.res_bus.vm_pu.at[b2], 1.0029376578)
-    assert net.sgen.name.at[sg0] == "sgen"
-
-    tol = 1e-6
-    base_z = 110 ** 2 / 100
-    sind = pp.create_series_reactor_as_impedance(net, b1, b2, r_ohm=100, x_ohm=200, sn_mva=100)
-    assert net.impedance.at[sind, 'rft_pu'] - 100 / base_z < tol
-    assert net.impedance.at[sind, 'xft_pu'] - 200 / base_z < tol
-
-    tid = pp.create_transformer_from_parameters(net, hv_bus=b2, lv_bus=b3, sn_mva=0.1, vn_hv_kv=110,
-                                                vn_lv_kv=20, vkr_percent=5, vk_percent=20,
-                                                pfe_kw=1, i0_percent=1)
-    pp.create_load(net, b3, 0.1)
-    assert net.trafo.at[tid, 'df'] == 1
-    pp.runpp(net)
-    tr_l = net.res_trafo.at[tid, 'loading_percent']
-    net.trafo.at[tid, 'df'] = 2
-    pp.runpp(net)
-    tr_l_2 = net.res_trafo.at[tid, 'loading_percent']
-    assert tr_l == tr_l_2 * 2
-    net.trafo.at[tid, 'df'] = 0
-    with pytest.raises(UserWarning):
-        pp.runpp(net)
-
-
-def test_nonexistent_bus():
-    from functools import partial
-    net = pp.create_empty_network()
-    create_functions = [partial(pp.create_load, net=net, p_mw=0, q_mvar=0, bus=0, index=0),
-                        partial(pp.create_sgen, net=net, p_mw=0, q_mvar=0, bus=0, index=0),
-                        partial(pp.create_dcline, net, from_bus=0, to_bus=1, p_mw=0.1,
-                                loss_percent=0, loss_mw=0.01, vm_from_pu=1., vm_to_pu=1., index=0),
-                        partial(pp.create_gen, net=net, p_mw=0, bus=0, index=0),
-                        partial(pp.create_ward, net, 0, 0, 0, 0, 0, index=0),
-                        partial(pp.create_xward, net, 0, 0, 0, 0, 0, 1, 1, 1, index=0),
-                        partial(pp.create_shunt, net=net, q_mvar=0, bus=0, index=0),
-                        partial(pp.create_ext_grid, net=net, bus=1, index=0),
-                        partial(pp.create_line, net=net, from_bus=0, to_bus=1, length_km=1.,
-                                std_type="NAYY 4x50 SE", index=0),
-                        partial(pp.create_line_from_parameters, net=net, from_bus=0, to_bus=1,
-                                length_km=1., r_ohm_per_km=0.1, x_ohm_per_km=0.1, max_i_ka=0.4,
-                                c_nf_per_km=10, index=1),
-                        partial(pp.create_transformer, net=net, hv_bus=0, lv_bus=1,
-                                std_type="63 MVA 110/20 kV", index=0),
-                        partial(pp.create_transformer3w, net=net, hv_bus=0, lv_bus=1, mv_bus=2,
-                                std_type="63/25/38 MVA 110/20/10 kV", index=0),
-                        partial(pp.create_transformer3w_from_parameters, net=net, hv_bus=0,
-                                lv_bus=1, mv_bus=2, i0_percent=0.89, pfe_kw=3.5,
-                                vn_hv_kv=110, vn_lv_kv=10, vn_mv_kv=20, sn_hv_mva=63,
-                                sn_lv_mva=38, sn_mv_mva=25, vk_hv_percent=10.4,
-                                vk_lv_percent=10.4, vk_mv_percent=10.4, vkr_hv_percent=0.28,
-                                vkr_lv_percent=0.35, vkr_mv_percent=0.32, index=1),
-                        partial(pp.create_transformer_from_parameters, net=net, hv_bus=0, lv_bus=1,
-                                sn_mva=60, vn_hv_kv=20., vn_lv_kv=0.4, vk_percent=10,
-                                vkr_percent=0.1, pfe_kw=0, i0_percent=0, index=1),
-                        partial(pp.create_impedance, net=net, from_bus=0, to_bus=1,
-                                rft_pu=0.1, xft_pu=0.1, sn_mva=0.6, index=0),
-                        partial(pp.create_switch, net, bus=0, element=1, et="b", index=0)]
-    for func in create_functions:
-        with pytest.raises(Exception):  # exception has to be raised since bus doesn't exist
-            func()
-    pp.create_bus(net, 0.4)
-    pp.create_bus(net, 0.4)
-    pp.create_bus(net, 0.4)
-    for func in create_functions:
-        func()  # buses exist, element can be created
-        with pytest.raises(Exception):  # exception is raised because index already exists
-            func()
-
-
-def test_tap_phase_shifter_default():
-    expected_default = False
-    net = pp.create_empty_network()
-    pp.create_bus(net, 110)
-    pp.create_bus(net, 20)
-    data = pp.load_std_type(net, "25 MVA 110/20 kV", "trafo")
-    if "tap_phase_shifter" in data:
-        del data["tap_phase_shifter"]
-    pp.create_std_type(net, data, "without_tap_shifter_info", "trafo")
-    pp.create_transformer_from_parameters(net, 0, 1, 25e3, 110, 20, 0.4, 12, 20, 0.07)
-    pp.create_transformer(net, 0, 1, "without_tap_shifter_info")
-    assert (net.trafo.tap_phase_shifter == expected_default).all()
-
-
-def test_create_line_conductance():
-    net = pp.create_empty_network()
-    pp.create_bus(net, 20)
-    pp.create_bus(net, 20)
-    pp.create_std_type(net, {'c_nf_per_km': 210, 'max_i_ka': 0.142, 'q_mm2': 50,
-                             'r_ohm_per_km': 0.642, 'type': 'cs', 'x_ohm_per_km': 0.083,
-                             "g_us_per_km": 1}, "test_conductance")
-
-    l = pp.create_line(net, 0, 1, 1., "test_conductance")
-    assert net.line.g_us_per_km.at[l] == 1
-
-
-def test_create_buses():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_buses(net, 3, 110)
-    # with geodata
-    b2 = pp.create_buses(net, 3, 110, geodata=(10, 20))
-    # with geodata as array
-    geodata = np.array([[10, 20], [20, 30], [30, 40]])
-    b3 = pp.create_buses(net, 3, 110, geodata=geodata)
-
-    assert len(net.bus) == 9
-    assert len(net.bus_geodata) == 6
-
-    for i in b2:
-        assert net.bus_geodata.at[i, 'x'] == 10
-        assert net.bus_geodata.at[i, 'y'] == 20
-
-    assert (net.bus_geodata.loc[b3, ['x', 'y']].values == geodata).all()
-
-    # no way of creating buses with not matching shape
-    with pytest.raises(ValueError):
-        pp.create_buses(net, 2, 110, geodata=geodata)
-
-
-def test_create_lines():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines(net, [b1, b1], [b2, b2], 4, std_type="48-AL1/8-ST1A 10.0")
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 0
-    assert sum(net.line.std_type == "48-AL1/8-ST1A 10.0") == 2
-    assert len(set(net.line.r_ohm_per_km)) == 1
-
-    # with geodata
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines(net, [b1, b1], [b2, b2], [1.5, 3], std_type="48-AL1/8-ST1A 10.0",
-                         geodata=[[(1,1),(2,2),(3,3)], [(1,1),(1,2)]])
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert net.line_geodata.at[l[0], "coords"] == [(1,1),(2,2),(3,3)]
-    assert net.line_geodata.at[l[1], "coords"] == [(1,1),(1,2)]
-
-    # setting params as single value
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines(net, [b1, b1], [b2, b2], length_km=5, df=0.8, in_service=False,
-                        geodata=[(10, 10), (20, 20)], parallel=1, max_loading_percent=90,
-                        name="test", std_type="48-AL1/8-ST1A 10.0")
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert net.line.length_km.at[l[0]] == 5
-    assert net.line.length_km.at[l[1]] == 5
-    assert net.line.at[l[0], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line.at[l[1], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line_geodata.at[l[0], "coords"] == [(10,10), (20,20)]
-    assert net.line_geodata.at[l[1], "coords"] == [(10,10), (20,20)]
-    assert net.line.at[l[0], "name"] == "test"
-    assert net.line.at[l[1], "name"] == "test"
-    assert net.line.at[l[0], "max_loading_percent"] == 90
-    assert net.line.at[l[1], "max_loading_percent"] == 90
-    assert net.line.at[l[0], "parallel"] == 1
-    assert net.line.at[l[1], "parallel"] == 1
-
-    # setting params as array
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines(net, [b1, b1], [b2, b2], length_km=[1, 5], df=[0.8, 0.7],
-                        in_service=[True, False],
-                        geodata=[[(10, 10), (20, 20)], [(100, 10), (200, 20)]], parallel=[2, 1],
-                        max_loading_percent=[80, 90], name=["test1", "test2"],
-                        std_type="48-AL1/8-ST1A 10.0")
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert net.line.at[l[0], "length_km"] == 1
-    assert net.line.at[l[1], "length_km"] == 5
-    assert net.line.at[l[0], "in_service"] == True  # is actually <class 'numpy.bool_'>
-    assert net.line.at[l[1], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line_geodata.at[l[0], "coords"] == [(10,10), (20,20)]
-    assert net.line_geodata.at[l[1], "coords"] == [(100,10), (200,20)]
-    assert net.line.at[l[0], "name"] == "test1"
-    assert net.line.at[l[1], "name"] == "test2"
-    assert net.line.at[l[0], "max_loading_percent"] == 80
-    assert net.line.at[l[1], "max_loading_percent"] == 90
-    assert net.line.at[l[0], "parallel"] == 2
-    assert net.line.at[l[1], "parallel"] == 1
-
-
-def test_create_lines_from_parameters():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], length_km=[10., 5.], x_ohm_per_km=[1., 1.],
-                                        r_ohm_per_km=[0.2, 0.2], c_nf_per_km=[0, 0], max_i_ka=[100, 100])
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 0
-    assert len(net.line.x_ohm_per_km) == 2
-    assert len(net.line.r_ohm_per_km) == 2
-    assert len(net.line.c_nf_per_km) == 2
-    assert len(net.line.max_i_ka) == 2
-    assert len(net.line.df) == 2
-
-    # with geodata
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], length_km=[10., 5.], x_ohm_per_km=[1., 1.],
-                                        r_ohm_per_km=[0.2, 0.2], c_nf_per_km=[0, 0], max_i_ka=[100, 100],
-                                        geodata=[[(1,1),(2,2),(3,3)], [(1,1),(1,2)]])
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert net.line_geodata.at[l[0], "coords"] == [(1,1),(2,2),(3,3)]
-    assert net.line_geodata.at[l[1], "coords"] == [(1,1),(1,2)]
-
-    # setting params as single value
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], length_km=5, x_ohm_per_km=1,
-                                        r_ohm_per_km=0.2, c_nf_per_km=0, max_i_ka=100, df=0.8, in_service=False,
-                                        geodata=[(10, 10), (20, 20)], parallel=1, max_loading_percent=90, name='test',
-                                        r0_ohm_per_km=0.1, g0_us_per_km=0., c0_nf_per_km=0.,
-                                        temperature_degree_celsius=20, alpha=0.04)
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert all(net.line['length_km'].values == 5)
-    assert all(net.line['x_ohm_per_km'].values == 1)
-    assert all(net.line['r_ohm_per_km'].values == 0.2)
-    assert all(net.line["r0_ohm_per_km"].values == 0.1)
-    assert all(net.line["g0_us_per_km"].values == 0)
-    assert all(net.line["c0_nf_per_km"].values == 0)
-    assert net.line.at[l[0], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line.at[l[1], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line_geodata.at[l[0], "coords"] == [(10,10), (20,20)]
-    assert net.line_geodata.at[l[1], "coords"] == [(10,10), (20,20)]
-    assert all(net.line["name"].values == "test")
-    assert all(net.line["max_loading_percent"].values == 90)
-    assert all(net.line["parallel"].values == 1)
-    assert all(net.line["temperature_degree_celsius"].values == 20.)
-    assert all(net.line["alpha"].values == 0.04)
-
-    # setting params as array
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    l = pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], length_km=[1, 5], r_ohm_per_km=[1, 2],
-                                        x_ohm_per_km=[0.3, 0.5], c_nf_per_km=[0., 0.1], r0_ohm_per_km=[0.1, 0.15],
-                                        x0_ohm_per_km=[0.2, 0.25], g0_us_per_km=[0., 0.], c0_nf_per_km=[0., 0.],
-                                        df=[0.8, 0.7], in_service=[True, False],
-                                        geodata=[[(10, 10), (20, 20)], [(100, 10), (200, 20)]], parallel=[2, 1],
-                                        max_loading_percent=[80, 90], name=["test1", "test2"], max_i_ka=[100, 200])
-
-    assert len(net.line) == 2
-    assert len(net.line_geodata) == 2
-    assert net.line.at[l[0], "length_km"] == 1
-    assert net.line.at[l[1], "length_km"] == 5
-    assert net.line.at[l[0], "r_ohm_per_km"] == 1
-    assert net.line.at[l[1], "r_ohm_per_km"] == 2
-    assert net.line.at[l[0], "x_ohm_per_km"] == 0.3
-    assert net.line.at[l[1], "x_ohm_per_km"] == 0.5
-    assert net.line.at[l[0], "c_nf_per_km"] == 0.
-    assert net.line.at[l[1], "c_nf_per_km"] == 0.1
-    assert net.line.at[l[0], "r0_ohm_per_km"] == 0.1
-    assert net.line.at[l[1], "r0_ohm_per_km"] == 0.15
-    assert net.line.at[l[0], "x0_ohm_per_km"] == 0.2
-    assert net.line.at[l[1], "x0_ohm_per_km"] == 0.25
-    assert all(net.line["g0_us_per_km"].values == 0)
-    assert all(net.line["c0_nf_per_km"].values == 0)
-    assert net.line.at[l[0], "in_service"] == True  # is actually <class 'numpy.bool_'>
-    assert net.line.at[l[1], "in_service"] == False  # is actually <class 'numpy.bool_'>
-    assert net.line_geodata.at[l[0], "coords"] == [(10,10), (20,20)]
-    assert net.line_geodata.at[l[1], "coords"] == [(100,10), (200,20)]
-    assert net.line.at[l[0], "name"] == "test1"
-    assert net.line.at[l[1], "name"] == "test2"
-    assert net.line.at[l[0], "max_loading_percent"] == 80
-    assert net.line.at[l[1], "max_loading_percent"] == 90
-    assert net.line.at[l[0], "parallel"] == 2
-    assert net.line.at[l[1], "parallel"] == 1
-    assert net.line.at[l[0], "max_i_ka"] == 100
-    assert net.line.at[l[1], "max_i_ka"] == 200
-
-
-def test_create_lines_raise_except():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], length_km=[10., 5.], x_ohm_per_km=[1., 1.],
-                                    r_ohm_per_km=[0.2, 0.2], c_nf_per_km=[0, 0], max_i_ka=[100, 100])
-
-    with pytest.raises(UserWarning, match="Lines trying to attach .*"):
-        pp.create_lines_from_parameters(net, [b1, 2], [2, b2], length_km=[10., 5.], x_ohm_per_km=[1., 1.],
-                                        r_ohm_per_km=[0.2, 0.2], c_nf_per_km=[0, 0], max_i_ka=[100, 100])
-
-    with pytest.raises(UserWarning, match="Lines with indexes .*"):
-        pp.create_lines_from_parameters(net, [b1, b1], [b2, b2], index=[0, 0], length_km=[10., 5.], x_ohm_per_km=[1., 1.],
-                                        r_ohm_per_km=[0.2, 0.2], c_nf_per_km=[0, 0], max_i_ka=[100, 100])
-
-
-def test_create_line_alpha_temperature():
-    net=pp.create_empty_network()
-    b = pp.create_buses(net, 5, 110)
-
-    l1=pp.create_line(net,0,1, 10, "48-AL1/8-ST1A 10.0")
-    l2=pp.create_line(net,1,2, 10, "48-AL1/8-ST1A 10.0", alpha=4.03e-3, temperature_degree_celsius=80)
-    l3=pp.create_line(net,2,3, 10, "48-AL1/8-ST1A 10.0")
-    l4=pp.create_line_from_parameters(net, 3,4,10, 1,1,1,100)
-    l5=pp.create_line_from_parameters(net, 3,4,10, 1,1,1,100, alpha=4.03e-3)
-
-    assert 'alpha' in net.line.columns
-    assert all(net.line.loc[[l2,l3,l5], 'alpha'] == 4.03e-3)
-    assert all(net.line.loc[[l1,l4], 'alpha'].isnull())
-    assert net.line.loc[l2, 'temperature_degree_celsius'] == 80
-    assert all(net.line.loc[[l1,l3,l4,l5], 'temperature_degree_celsius'].isnull())
-
-
-def test_create_transformers_from_parameters():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 15)
-    b2 = pp.create_bus(net, 0.4)
-    t = pp.create_transformers_from_parameters(net, [b1, b1], [b2, b2], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                               sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                               i0_percent=0.3, foo=2)
-    assert len(net.trafo) == 2
-    assert len(net.trafo.vk_percent) == 2
-    assert len(net.trafo.vkr_percent) == 2
-    assert len(net.trafo.pfe_kw) == 2
-    assert len(net.trafo.i0_percent) == 2
-    assert len(net.trafo.df) == 2
-    assert len(net.trafo.foo) == 2
-
-    # setting params as single value
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 15)
-    b2 = pp.create_bus(net, 0.4)
-    pp.create_transformers_from_parameters(net, hv_buses=[b1, b1], lv_buses=[b2, b2], vn_hv_kv=15., vn_lv_kv=0.45,
-                                               sn_mva= 0.5, vk_percent=1., vkr_percent=0.3, pfe_kw=0.2, i0_percent=0.3,
-                                               vk0_percent=0.4, vkr0_percent=1.7,  mag0_rx=0.4, mag0_percent=0.3,
-                                               tap_neutral=0., vector_group='Dyn', si0_hv_partial=0.1,
-                                               max_loading_percent=80)
-    assert len(net.trafo) == 2
-    assert all(net.trafo.hv_bus == 0)
-    assert all(net.trafo.lv_bus == 1)
-    assert all(net.trafo.sn_mva == 0.5)
-    assert all(net.trafo.vn_hv_kv == 15.)
-    assert all(net.trafo.vn_lv_kv == 0.45)
-    assert all(net.trafo.vk_percent == 1.)
-    assert all(net.trafo.vkr_percent == 0.3)
-    assert all(net.trafo.pfe_kw == 0.2)
-    assert all(net.trafo.i0_percent == 0.3)
-    assert all(net.trafo.vk0_percent == 0.4)
-    assert all(net.trafo.mag0_rx == 0.4)
-    assert all(net.trafo.mag0_percent == 0.3)
-    assert all(net.trafo.tap_neutral == 0.)
-    assert all(net.trafo.tap_pos == 0.)
-    assert all(net.trafo.vector_group == 'Dyn')
-    assert all(net.trafo.max_loading_percent == 80.)
-    assert all(net.trafo.si0_hv_partial == 0.1)
-
-    # setting params as array
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    t = pp.create_transformers_from_parameters(net, hv_buses=[b1, b1], lv_buses=[b2, b2], vn_hv_kv=[15., 15.], sn_mva=[0.6, 0.6],
-                                               vn_lv_kv=[0.45, 0.45], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3],
-                                               pfe_kw=[0.2, 0.2], i0_percent=[0.3, 0.3],  vk0_percent=[0.4, 0.4],
-                                               mag0_rx=[0.4, 0.4], mag0_percent=[0.3, 0.3], tap_neutral=[0., 1.],
-                                               tap_pos=[-1, 4])
-    print(net.trafo.tap_neutral)
-    assert len(net.trafo) == 2
-    assert all(net.trafo.hv_bus == 0)
-    assert all(net.trafo.lv_bus == 1)
-    assert all(net.trafo.vn_hv_kv == 15.)
-    assert all(net.trafo.vn_lv_kv == 0.45)
-    assert all(net.trafo.sn_mva == 0.6)
-    assert all(net.trafo.vk_percent == 1.)
-    assert all(net.trafo.vkr_percent == 0.3)
-    assert all(net.trafo.pfe_kw == 0.2)
-    assert all(net.trafo.i0_percent == 0.3)
-    assert all(net.trafo.vk0_percent == 0.4)
-    assert all(net.trafo.mag0_rx == 0.4)
-    assert all(net.trafo.mag0_percent == 0.3)
-    assert net.trafo.tap_neutral.at[t[0]] == 0
-    assert net.trafo.tap_neutral.at[t[1]] == 1
-    assert net.trafo.tap_pos.at[t[0]] == -1
-    assert net.trafo.tap_pos.at[t[1]] == 4
-
-
-def test_create_transformers_raise_except():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    pp.create_transformers_from_parameters(net, [b1, b1], [b2, b2], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                           sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                           i0_percent=0.3, foo=2)
-
-    with pytest.raises(UserWarning, match="A trafo with index 1 already exists"):
-        pp.create_transformers_from_parameters(net, [b1, b1], [b2, b2], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                               sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                               i0_percent=0.3, index=[2, 1])
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 10)
-    pp.create_transformers_from_parameters(net, [b1, b1], [b2, b2], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                           sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                           i0_percent=0.3, foo=2)
-    with pytest.raises(UserWarning, match="Transformer trying to attach to non existing buses \[2\]"):
-        pp.create_transformers_from_parameters(net, [b1, 2], [b2, b2], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                               sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                               i0_percent=0.3, foo=2)
-
-    with pytest.raises(UserWarning, match="Transformer trying to attach to non existing buses \[3\]"):
-        pp.create_transformers_from_parameters(net, [b1, b1], [b2, 3], vn_hv_kv=[15., 15.], vn_lv_kv=[0.45, 0.45],
-                                                sn_mva=[0.5, 0.7], vk_percent=[1., 1.], vkr_percent=[0.3, 0.3], pfe_kw=0.2,
-                                                i0_percent=0.3, foo=2)
-
-
-def test_create_transformers3w_from_parameters():
-
-    # setting params as single value
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 15)
-    b2 = pp.create_bus(net, 0.4)
-    b3 = pp.create_bus(net, 0.9)
-    pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, b3], lv_buses=[b2, b2],
-                                               vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                               sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                               vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                               pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                               mag0_rx=0.4, mag0_percent=0.3)
-    assert len(net.trafo3w) == 2
-    assert all(net.trafo3w.hv_bus == 0)
-    assert all(net.trafo3w.lv_bus == 1)
-    assert all(net.trafo3w.mv_bus == 2)
-    assert all(net.trafo3w.sn_hv_mva == 0.6)
-    assert all(net.trafo3w.sn_mv_mva == 0.5)
-    assert all(net.trafo3w.sn_lv_mva == 0.4)
-    assert all(net.trafo3w.vn_hv_kv == 15.)
-    assert all(net.trafo3w.vn_mv_kv == 0.9)
-    assert all(net.trafo3w.vn_lv_kv == 0.45)
-    assert all(net.trafo3w.vk_hv_percent == 1.)
-    assert all(net.trafo3w.vk_mv_percent == 1.)
-    assert all(net.trafo3w.vk_lv_percent == 1.)
-    assert all(net.trafo3w.vkr_hv_percent == 0.3)
-    assert all(net.trafo3w.vkr_mv_percent == 0.3)
-    assert all(net.trafo3w.vkr_lv_percent == 0.3)
-    assert all(net.trafo3w.pfe_kw == 0.2)
-    assert all(net.trafo3w.i0_percent == 0.3)
-    assert all(net.trafo3w.mag0_rx == 0.4)
-    assert all(net.trafo3w.mag0_percent == 0.3)
-    assert all(net.trafo3w.tap_neutral == 0.)
-    assert all(net.trafo3w.tap_pos == 0.)
-
-    # setting params as array
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 10)
-    b2 = pp.create_bus(net, 0.4)
-    b3 = pp.create_bus(net, 0.9)
-    pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, b3], lv_buses=[b2, b2],
-                                                 vn_hv_kv=[15., 14.5], vn_mv_kv=[0.9, 0.7], vn_lv_kv=[0.45, 0.5],
-                                                 sn_hv_mva= [0.6, 0.7], sn_mv_mva=[0.5, 0.4], sn_lv_mva=[0.4, 0.3],
-                                                 vk_hv_percent=[1., 1.], vk_mv_percent=[1., 1.], vk_lv_percent=[1.,1.],
-                                                 vkr_hv_percent=[0.3, 0.3], vkr_mv_percent=[0.3, 0.3],
-                                                 vkr_lv_percent=[0.3, 0.3], pfe_kw=[0.2, 0.1], i0_percent=[0.3, 0.2],
-                                                 tap_neutral=[0., 5.], tap_pos=[1, 2], in_service=[True, False],
-                                                 custom_arg=['foo', 'bar']
-                                                 )
-    assert len(net.trafo3w) == 2
-    assert all(net.trafo3w.hv_bus == 0)
-    assert all(net.trafo3w.lv_bus == 1)
-    assert all(net.trafo3w.mv_bus == 2)
-    assert all(net.trafo3w.sn_hv_mva == [0.6, 0.7])
-    assert all(net.trafo3w.sn_mv_mva == [0.5, 0.4])
-    assert all(net.trafo3w.sn_lv_mva == [0.4, 0.3])
-    assert all(net.trafo3w.vn_hv_kv == [15., 14.5])
-    assert all(net.trafo3w.vn_mv_kv == [0.9, 0.7])
-    assert all(net.trafo3w.vn_lv_kv == [0.45, 0.5])
-    assert all(net.trafo3w.vk_hv_percent == 1.)
-    assert all(net.trafo3w.vk_mv_percent == 1.)
-    assert all(net.trafo3w.vk_lv_percent == 1.)
-    assert all(net.trafo3w.vkr_hv_percent == 0.3)
-    assert all(net.trafo3w.vkr_mv_percent == 0.3)
-    assert all(net.trafo3w.vkr_lv_percent == 0.3)
-    assert all(net.trafo3w.pfe_kw == [0.2, 0.1])
-    assert all(net.trafo3w.i0_percent == [0.3, 0.2])
-    assert all(net.trafo3w.tap_neutral == [0., 5.])
-    assert all(net.trafo3w.tap_pos == [1, 2])
-    assert all(net.trafo3w.in_service == [True, False])
-    assert all(net.trafo3w.custom_arg == ['foo', 'bar'])
-
-
-def test_create_transformers3w_raise_except():
-    # standard
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 15)
-    b2 = pp.create_bus(net, 0.4)
-    b3 = pp.create_bus(net, 0.9)
-    pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, b3], lv_buses=[b2, b2],
-                                             vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                             sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                             vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                             pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                             mag0_rx=0.4, mag0_percent=0.3)
-
-    with pytest.raises(UserWarning, match="A three winding transformer with index 1 already exists"):
-        pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, b3], lv_buses=[b2, b2],
-                                                 vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                                 sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                                 vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                                 pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                                 mag0_rx=0.4, mag0_percent=0.3, index=[2, 1])
-    net = pp.create_empty_network()
-    b1 = pp.create_bus(net, 15)
-    b2 = pp.create_bus(net, 0.4)
-    b3 = pp.create_bus(net, 0.9)
-    with pytest.raises(UserWarning, match="Transformer trying to attach to non existing buses \{6\}"):
-        pp.create_transformers3w_from_parameters(net, hv_buses=[6, b1], mv_buses=[b3, b3], lv_buses=[b2, b2],
-                                                 vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                                 sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                                 vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                                 pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                                 mag0_rx=0.4, mag0_percent=0.3, index=[0, 1])
-
-    with pytest.raises(UserWarning, match="Transformer trying to attach to non existing buses \{3\}"):
-        pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, 3], lv_buses=[b2, b2],
-                                                 vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                                 sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                                 vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                                 pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                                 mag0_rx=0.4, mag0_percent=0.3)
-    with pytest.raises(UserWarning, match="Transformer trying to attach to non existing buses \{3, 4\}"):
-        pp.create_transformers3w_from_parameters(net, hv_buses=[b1, b1], mv_buses=[b3, b3], lv_buses=[4, 3],
-                                                vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                                sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                                vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                                pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.,
-                                                mag0_rx=0.4, mag0_percent=0.3)
-
-
-def test_create_switches():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 15)
-    b4 = pp.create_bus(net, 15)
-    l1 = pp.create_line(net, b1, b2,  length_km=1, std_type="48-AL1/8-ST1A 10.0")
-    t1 = pp.create_transformer(net, b2, b3, std_type='160 MVA 380/110 kV')
-
-    sw = pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, t1, b4], et=["l", "t", "b"], z_ohm=0., foo='aaa')
-
-    assert(net.switch.bus.at[0] == b1)
-    assert(net.switch.bus.at[1] == b2)
-    assert(net.switch.bus.at[2] == b3)
-    assert(net.switch.element.at[sw[0]] == l1)
-    assert(net.switch.element.at[sw[1]] == t1)
-    assert(net.switch.element.at[sw[2]] == b4)
-    assert(net.switch.et.at[0] == "l")
-    assert(net.switch.et.at[1] == "t")
-    assert(net.switch.et.at[2] == "b")
-    assert(net.switch.z_ohm.at[0] == 0)
-    assert(net.switch.z_ohm.at[1] == 0)
-    assert(net.switch.z_ohm.at[2] == 0)
-    assert(net.switch.foo.at[0] == 'aaa')
-    assert(net.switch.foo.at[1] == 'aaa')
-    assert(net.switch.foo.at[2] == 'aaa')
-
-
-def test_create_switches_raise_except():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 15)
-    b4 = pp.create_bus(net, 15)
-    b5 = pp.create_bus(net, 0.9)
-    b6 = pp.create_bus(net, 0.4)
-    l1 = pp.create_line(net, b1, b2,  length_km=1, std_type="48-AL1/8-ST1A 10.0")
-    t1 = pp.create_transformer(net, b2, b3, std_type='160 MVA 380/110 kV')
-    t3w1 = pp.create_transformer3w_from_parameters(
-                                                net,
-                                                hv_bus=b4, mv_bus=b5, lv_bus=b6,
-                                                vn_hv_kv=15., vn_mv_kv=0.9, vn_lv_kv=0.45, sn_hv_mva= 0.6, sn_mv_mva=0.5,
-                                                sn_lv_mva=0.4, vk_hv_percent=1., vk_mv_percent=1., vk_lv_percent=1.,
-                                                vkr_hv_percent=0.3, vkr_mv_percent=0.3, vkr_lv_percent=0.3,
-                                                pfe_kw=0.2, i0_percent=0.3, tap_neutral=0.
-                                            )
-    sw = pp.create_switch(net, bus=b1, element=l1, et="l", z_ohm=0.)
-    with pytest.raises(UserWarning, match="A switch with index 0 already exists"):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, t1, b4], et=["l", "t", "b"], z_ohm=0.,
-                           index=[sw, 1, 2])
-
-    with pytest.raises(UserWarning, match="Buses \{6\} do not exist"):
-        pp.create_switches(net, buses=[6, b2, b3], elements=[l1, t1, b4], et=["l", "t", "b"], z_ohm=0.)
-
-    with pytest.raises(UserWarning, match="Line 1 does not exist"):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[1, t1, b4], et=["l", "t", "b"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Line %s not connected to bus %s" % (l1, b3)):
-        pp.create_switches(net, buses=[b3, b2, b3], elements=[l1, t1, b4], et=["l", "t", "b"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Trafo 1 does not exist"):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, 1, b4], et=["l", "t", "b"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Trafo %s not connected to bus %s" % (t1, b1)):
-        pp.create_switches(net, buses=[b1, b1, b3], elements=[l1, t1, b4], et=["l", "t", "b"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Unknown bus index 6"):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, t1, 6], et=["l", "t", "b"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Trafo3w 1 does not exist"):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, t1, 1], et=["l", "t", "t3"], z_ohm=0.)
-    with pytest.raises(UserWarning, match="Trafo3w %s not connected to bus %s" % (t3w1, b3)):
-        pp.create_switches(net, buses=[b1, b2, b3], elements=[l1, t1, t3w1], et=["l", "t", "t3"], z_ohm=0.)
-
-
-def test_create_loads():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
-    pp.create_loads(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                    max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                    )
-
-    assert(net.load.bus.at[0] == b1)
-    assert(net.load.bus.at[1] == b2)
-    assert(net.load.bus.at[2] == b3)
-    assert(net.load.p_mw.at[0] == 0)
-    assert(net.load.p_mw.at[1] == 0)
-    assert(net.load.p_mw.at[2] == 1)
-    assert(net.load.q_mvar.at[0] == 0)
-    assert(net.load.q_mvar.at[1] == 0)
-    assert(net.load.q_mvar.at[2] == 0)
-    assert(net.load.controllable.at[0] == True)
-    assert(net.load.controllable.at[1] == False)
-    assert(net.load.controllable.at[2] == False)
-    assert(all(net.load.max_p_mw.values == 0.2))
-    assert(all(net.load.min_p_mw.values == [0, 0.1, 0]))
-    assert(all(net.load.max_q_mvar.values == 0.2))
-    assert(all(net.load.min_q_mvar.values == [0, 0.1, 0]))
-
-
-def test_create_loads_raise_except():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
-
-    with pytest.raises(UserWarning, match="Cannot attach to buses \{3, 4, 5\}, they does not exist"):
-        pp.create_loads(net, buses=[3, 4, 5], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        )
-
-    l = pp.create_loads(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        )
-    with pytest.raises(UserWarning, match="Loads with the ids \[0 1 2\] already exists"):
-        pp.create_loads(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        index = l)
-
-
-def test_create_sgens():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
-    pp.create_sgens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                    max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                    k=1.3, rx=0.4, current_source=True)
-
-    assert(net.sgen.bus.at[0] == b1)
-    assert(net.sgen.bus.at[1] == b2)
-    assert(net.sgen.bus.at[2] == b3)
-    assert(net.sgen.p_mw.at[0] == 0)
-    assert(net.sgen.p_mw.at[1] == 0)
-    assert(net.sgen.p_mw.at[2] == 1)
-    assert(net.sgen.q_mvar.at[0] == 0)
-    assert(net.sgen.q_mvar.at[1] == 0)
-    assert(net.sgen.q_mvar.at[2] == 0)
-    assert(net.sgen.controllable.at[0] == True)
-    assert(net.sgen.controllable.at[1] == False)
-    assert(net.sgen.controllable.at[2] == False)
-    assert(all(net.sgen.max_p_mw.values == 0.2))
-    assert(all(net.sgen.min_p_mw.values == [0, 0.1, 0]))
-    assert(all(net.sgen.max_q_mvar.values == 0.2))
-    assert(all(net.sgen.min_q_mvar.values == [0, 0.1, 0]))
-    assert(all(net.sgen.k.values == 1.3))
-    assert(all(net.sgen.rx.values == 0.4))
-    assert(all(net.sgen.current_source))
-
-
-def test_create_sgens_raise_except():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
-
-    with pytest.raises(UserWarning, match="Cannot attach to buses \{3, 4, 5\}, they does not exist"):
-        pp.create_sgens(net, buses=[3, 4, 5], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        k=1.3, rx=0.4, current_source=True)
-
-    sg = pp.create_sgens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        k=1.3, rx=0.4, current_source=True)
-    with pytest.raises(UserWarning, match="Sgens with the ids \[0 1 2\] already exists"):
-        pp.create_sgens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], q_mwar=0., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        k=1.3, rx=0.4, current_source=True, index=sg)
-
-
-def test_create_gens():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
-    pp.create_gens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], vm_pu=1., controllable=[True, False, False],
-                   max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                   min_vm_pu=0.85, max_vm_pu=1.15, vn_kv=0.4, xdss_pu=0.1, rdss_pu=0.1, cos_phi=1.
+import scipy as sp
+import numbers
+from packaging.version import Version
+
+from pandapower.pypower.idx_brch import F_BUS, T_BUS, BR_STATUS
+from pandapower.pypower.idx_brch_dc import DC_BR_STATUS, DC_F_BUS, DC_T_BUS
+from pandapower.pypower.idx_bus import BUS_I, BUS_TYPE, NONE, PD, QD, VM, VA, REF, PQ, VMIN, VMAX, PV
+from pandapower.pypower.idx_gen import PMIN, PMAX, QMIN, QMAX
+from pandapower.pypower.idx_ssc import SSC_STATUS, SSC_BUS, SSC_INTERNAL_BUS
+from pandapower.pypower.idx_tcsc import TCSC_STATUS, TCSC_F_BUS, TCSC_T_BUS
+from pandapower.pypower.idx_vsc import VSC_STATUS, VSC_BUS, VSC_INTERNAL_BUS, VSC_BUS_DC, VSC_MODE_AC, VSC_MODE_AC_SL, \
+    VSC_INTERNAL_BUS_DC
+from .pypower.idx_bus_dc import DC_VMAX, DC_VMIN, DC_BUS_I, DC_BUS_TYPE, DC_NONE, DC_REF, DC_B2B, DC_P
+
+try:
+    from lightsim2grid.newtonpf import newtonpf_new as newtonpf_ls
+    lightsim2grid_available = True
+except ImportError:
+    lightsim2grid_available = False
+try:
+    import pandaplan.core.pplog as logging
+except ImportError:
+    import logging
+
+logger = logging.getLogger(__name__)
+
+def log_to_level(msg, passed_logger, level):
+    if level == "error":
+        passed_logger.error(msg)
+    elif level == "warning":
+        passed_logger.warning(msg)
+    elif level == "info":
+        passed_logger.info(msg)
+    elif level == "debug":
+        passed_logger.debug(msg)
+    elif level == "UserWarning":
+        raise UserWarning(msg)
+    elif level is None:
+        pass
+
+
+def version_check(package_name, level="UserWarning", ignore_not_installed=False):
+
+    minimum_version = {'plotly': "3.1.1",
+                       'numba': "0.25",
+                      }
+    if ignore_not_installed and package_name not in minimum_version.keys():
+        return
+
+    try:
+        version = version_str(package_name)
+        if Version(version) < Version(minimum_version.get(package_name, '0.0.0')):
+            log_to_level((
+                f"{package_name} version {version} is no longer supported by pandapower.\r\n"
+                f"Please upgrade your installation. Possibly it can be done via "
+                f"'pip install --upgrade {package_name}'."), logger, level)
+    except PackageNotFoundError:
+        if ignore_not_installed:
+            raise PackageNotFoundError(
+                f"Python package '{package_name}', is needed.\r\nPlease install it. "
+                f"Possibly it can be installed via 'pip install {package_name}'.")
+
+
+try:
+    from numba import jit
+    try:
+        version_check("numba")
+        NUMBA_INSTALLED = True
+    except UserWarning:
+        msg = 'The numba version is too old.\n'
+        log_to_level(msg, logger, 'warning')
+        NUMBA_INSTALLED = False
+except ImportError:
+    from .pf.no_numba import jit
+    NUMBA_INSTALLED = False
+
+
+def soft_dependency_error(fct_name, required_packages):
+    required_packages = required_packages if isinstance(required_packages, str) else \
+        "','".join(required_packages)
+    error_msg = "\n".join([
+        "Some pandapower functionality use optional python packages.",
+        f"{fct_name} requires '{required_packages}' which could not all be imported.",
+        'To install pandapower with all optional dependencies, type `pip install pandapower["all"]`.'
+    ])
+    raise ImportError(error_msg)
+
+
+def warn_and_fix_parameter_renaming(old_parameter_name, new_parameter_name, new_parameter,
+                                    default_value, category=DeprecationWarning, **kwargs):
+    if old_parameter_name in kwargs:
+        warnings.warn(f"Parameter '%s' has been renamed to '%s'." % (
+            old_parameter_name, new_parameter_name), category=category)
+        if new_parameter == default_value:
+            return kwargs.pop(old_parameter_name)
+    return new_parameter
+
+
+class ADict(dict, MutableMapping):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # to prevent overwrite of internal attributes by new keys
+        # see _valid_name()
+        self._setattr('_allow_invalid_attributes', False)
+
+    def _build(self, obj, **kwargs):
+        """
+        We only want dict like elements to be treated as recursive AttrDicts.
+        """
+        return obj
+
+    # --- taken from AttrDict
+
+    def __getstate__(self):
+        return self.copy(), self._allow_invalid_attributes
+
+    def __dir__(self):
+        return list(self.keys())
+
+    def __setstate__(self, state):
+        mapping, allow_invalid_attributes = state
+        self.update(mapping)
+        self._setattr('_allow_invalid_attributes', allow_invalid_attributes)
+
+    @classmethod
+    def _constructor(cls, mapping):
+        return cls(mapping)
+
+    # --- taken from MutableAttr
+
+    def _setattr(self, key, value):
+        """
+        Add an attribute to the object, without attempting to add it as
+        a key to the mapping (i.e. internals)
+        """
+        super(MutableMapping, self).__setattr__(key, value)
+
+    def __setattr__(self, key, value):
+        """
+        Add an attribute.
+
+        key: The name of the attribute
+        value: The attributes contents
+        """
+        if self._valid_name(key):
+            self[key] = value
+        elif getattr(self, '_allow_invalid_attributes', True):
+            super(MutableMapping, self).__setattr__(key, value)
+        else:
+            raise TypeError(
+                "'{cls}' does not allow attribute creation.".format(
+                    cls=self.__class__.__name__
                 )
-    assert(net.gen.bus.at[0] == b1)
-    assert(net.gen.bus.at[1] == b2)
-    assert(net.gen.bus.at[2] == b3)
-    assert(net.gen.p_mw.at[0] == 0)
-    assert(net.gen.p_mw.at[1] == 0)
-    assert(net.gen.p_mw.at[2] == 1)
-    assert(net.gen.controllable.at[0] == True)
-    assert(net.gen.controllable.at[1] == False)
-    assert(net.gen.controllable.at[2] == False)
-    assert(all(net.gen.max_p_mw.values == 0.2))
-    assert(all(net.gen.min_p_mw.values == [0, 0.1, 0]))
-    assert(all(net.gen.max_q_mvar.values == 0.2))
-    assert(all(net.gen.min_q_mvar.values == [0, 0.1, 0]))
-    assert(all(net.gen.min_vm_pu.values == 0.85))
-    assert(all(net.gen.max_vm_pu.values == 1.15))
-    assert(all(net.gen.vn_kv.values == 0.4))
-    assert(all(net.gen.xdss_pu.values == 0.1))
-    assert(all(net.gen.rdss_pu.values == 0.1))
-    assert(all(net.gen.cos_phi.values == 1.))
+            )
+
+    def _delattr(self, key):
+        """
+        Delete an attribute from the object, without attempting to
+        remove it from the mapping (i.e. internals)
+        """
+        super(MutableMapping, self).__delattr__(key)
+
+    def __delattr__(self, key, force=False):
+        """
+        Delete an attribute.
+
+        key: The name of the attribute
+        """
+        if self._valid_name(key):
+            del self[key]
+        elif getattr(self, '_allow_invalid_attributes', True):
+            super(MutableMapping, self).__delattr__(key)
+        else:
+            raise TypeError(
+                "'{cls}' does not allow attribute deletion.".format(
+                    cls=self.__class__.__name__
+                )
+            )
+
+    def __call__(self, key):
+        """
+        Dynamically access a key-value pair.
+
+        key: A key associated with a value in the mapping.
+
+        This differs from __getitem__, because it returns a new instance
+        of an Attr (if the value is a Mapping object).
+        """
+        if key not in self:
+            raise AttributeError(
+                "'{cls} instance has no attribute '{name}'".format(
+                    cls=self.__class__.__name__, name=key
+                )
+            )
+
+        return self._build(self[key])
+
+    def __getattr__(self, key):
+        """
+        Access an item as an attribute.
+        """
+        if key not in self or not self._valid_name(key):
+            raise AttributeError(
+                "'{cls}' instance has no attribute '{name}'".format(
+                    cls=self.__class__.__name__, name=key
+                )
+            )
+
+        return self._build(self[key])
+
+    def __deepcopy__(self, memo):
+        """
+        overloads the deepcopy function of pandapower if at least one DataFrame with column
+        "object" is in net
+
+        in addition, line geodata can contain mutable objects like lists, and it is also treated
+        specially
+
+        reason: some of these objects contain a reference to net which breaks the default deepcopy
+        function. Also, the DataFrame doesn't deepcopy its elements if geodata changes in the
+        lists, it affects both net instances
+        This fix was introduced in pandapower 2.2.1
+
+        """
+        deep_columns = {'object', 'coords', 'geometry'}
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.items():
+            if isinstance(v, pd.DataFrame) and not set(v.columns).isdisjoint(deep_columns):
+                if k not in result:
+                    result[k] = v.__class__(index=v.index, columns=v.columns)
+                for col in v.columns:
+                    if col in deep_columns:
+                        result[k][col] = v[col].apply(lambda x: copy.deepcopy(x, memo))
+                    else:
+                        result[k][col] = copy.deepcopy(v[col], memo)
+                _preserve_dtypes(result[k], v.dtypes)
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+
+        result._setattr('_allow_invalid_attributes', self._allow_invalid_attributes)
+        return result
+
+    @classmethod
+    def _valid_name(cls, key):
+        """
+        Check whether a key is a valid attribute name.
+
+        A key may be used as an attribute if:
+         * It is a string
+         * The key doesn't overlap with any class attributes (for Attr,
+            those would be 'get', 'items', 'keys', 'values', 'mro', and
+            'register').
+        """
+        return (
+                isinstance(key, str) and
+                not hasattr(cls, key)
+        )
 
 
-def test_create_gens_raise_except():
-    net = pp.create_empty_network()
-    # standard
-    b1 = pp.create_bus(net, 110)
-    b2 = pp.create_bus(net, 110)
-    b3 = pp.create_bus(net, 110)
+class pandapowerNet(ADict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if isinstance(args[0], self.__class__):
+            net = args[0]
+            self.clear()
+            self.update(**copy.deepcopy(net))
 
-    with pytest.raises(UserWarning, match="Cannot attach to buses \{3, 4, 5\}, they does not exist"):
-        pp.create_gens(net, buses=[3, 4, 5], p_mw=[0, 0, 1], vm_pu=1., controllable=[True, False, False],
-                       max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                       min_vm_pu=0.85, max_vm_pu=1.15, vn_kv=0.4, xdss_pu=0.1, rdss_pu=0.1, cos_phi=1.
-                       )
+        for key in self:
+            if isinstance(self[key], list):
+                self[key] = pd.DataFrame(np.zeros(0, dtype=self[key]), index=pd.Index([],
+                                         dtype=np.int64))
 
-    g = pp.create_gens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], vm_pu=1., controllable=[True, False, False],
-                        max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                        min_vm_pu=0.85, max_vm_pu=1.15, vn_kv=0.4, xdss_pu=0.1, rdss_pu=0.1, cos_phi=1.
-                        )
-    with pytest.raises(UserWarning, match="gens with the ids \[0 1 2\] already exists"):
-        pp.create_gens(net, buses=[b1, b2, b3], p_mw=[0, 0, 1], vm_pu=1., controllable=[True, False, False],
-                       max_p_mw=0.2, min_p_mw=[0, 0.1, 0],  max_q_mvar=0.2, min_q_mvar=[0, 0.1, 0],
-                       min_vm_pu=0.85, max_vm_pu=1.15, vn_kv=0.4, xdss_pu=0.1, rdss_pu=0.1, cos_phi=1.,
-                       index=g)
+    @deprecated("Use copy.deepcopy(net) instead of net.deepcopy()")
+    def deepcopy(self):
+        return copy.deepcopy(self)
 
-if __name__ == '__main__':
-    pytest.main(["test_create.py"])
+    def __repr__(self):  # pragma: no cover
+        """
+        See Also
+        --------
+        count_elements
+        """
+        par = []
+        res = []
+        for et in list(self.keys()):
+            if not et.startswith("_") and isinstance(self[et], pd.DataFrame) and len(self[et]) > 0:
+                n_rows = self[et].shape[0]
+                if 'res_' in et:
+                    res.append(f"   - {et} ({n_rows} element{plural_s(n_rows)})")
+                elif et == 'group':
+                    n_groups = len(set(self[et].index))
+                    par.append(f"   - {et} ({n_groups} group{plural_s(n_groups)}, {n_rows} row{plural_s(n_rows)})")
+                else:
+                    par.append(f"   - {et} ({n_rows} element{plural_s(n_rows)})")
+        res_cost = [" and the following result values:",
+                    "   - %s" % "res_cost"] if "res_cost" in self.keys() else []
+        if not len(par) + len(res):
+            return "This pandapower network is empty"
+        if len(res):
+            res = [" and the following results tables:"] + res
+        lines = ["This pandapower network includes the following parameter tables:"] + \
+            par + res + res_cost
+        return "\n".join(lines)
+
+
+def plural_s(number):
+    return "" if number == 1 else "s"
+
+
+
+def ets_to_element_types(ets=None):
+    ser = pd.Series(["bus", "line", "trafo", "trafo3w", "impedance"],
+                    index=["b", "l", "t", "t3", "i"])
+    if ets is None:
+        return ser
+    elif isinstance(ets, str):
+        return ser.at[ets]
+    else:
+        return list(ser.loc[ets])
+
+
+def element_types_to_ets(element_types=None):
+    ser1 = ets_to_element_types()
+    ser2 = pd.Series(ser1.index, index=list(ser1))
+    if element_types is None:
+        return ser2
+    elif isinstance(ets, str):
+        return ser2.at[element_types]
+    else:
+        return list(ser2.loc[element_types])
+
+
+def _preserve_dtypes(df, dtypes):
+    for item, dtype in list(dtypes.items()):
+        if df.dtypes.at[item] != dtype:
+            if (dtype == bool or dtype == np.bool_) and np.any(df[item].isnull()):
+                raise UserWarning(f"Encountered NaN value(s) in a boolean column {item}! "
+                                  f"NaN are casted to True by default, which can lead to errors. "
+                                  f"Replace NaN values with True or False first.")
+            try:
+                df[item] = df[item].astype(dtype)
+            except ValueError:
+                df[item] = df[item].astype(float)
+
+
+def get_free_id(df):
+    """
+    Returns next free ID in a dataframe
+    """
+    index_values = df.index.get_level_values(0) if isinstance(df.index, pd.MultiIndex) else df.index.values
+    return np.int64(0) if len(df) == 0 else index_values.max() + 1
+
+
+class ppException(Exception):
+    """
+    General pandapower custom parent exception.
+    """
+    pass
+
+
+class AlgorithmUnknown(ppException):
+    """
+    Exception being raised in case optimal powerflow did not converge.
+    """
+    pass
+
+
+class LoadflowNotConverged(ppException):
+    """
+    Exception being raised in case loadflow did not converge.
+    """
+    pass
+
+
+class ControllerNotConverged(ppException):
+    """
+    Exception being raised in case a controller does not converge.
+    """
+    pass
+
+
+class NetCalculationNotConverged(ppException):
+    """
+    Exception being raised in case a controller does not converge.
+    """
+    pass
+
+
+class OPFNotConverged(ppException):
+    """
+    Exception being raised in case optimal powerflow did not converge.
+    """
+    pass
+
+
+class MapboxTokenMissing(ppException):
+    """
+    Exception being raised in case loadflow did not converge.
+    """
+    pass
+
+
+def _sum_by_group(bus, first_val, second_val):
+    order = np.argsort(bus)
+    bus = bus[order]
+    index = np.ones(len(bus), 'bool')
+    index[:-1] = bus[1:] != bus[:-1]
+    bus = bus[index]
+    first_val = first_val[order]
+    first_val.cumsum(out=first_val)
+    first_val = first_val[index]
+    first_val[1:] = first_val[1:] - first_val[:-1]
+    second_val = second_val[order]
+    second_val.cumsum(out=second_val)
+    second_val = second_val[index]
+    second_val[1:] = second_val[1:] - second_val[:-1]
+    return bus, first_val, second_val
+
+
+def _sum_by_group_nvals(bus, *vals):
+    order = np.argsort(bus)
+    bus = bus[order]
+    index = np.ones(len(bus), 'bool')
+    index[:-1] = bus[1:] != bus[:-1]
+    bus = bus[index]
+    newvals = tuple(np.zeros((len(vals), len(bus))))
+    for val, newval in zip(vals, newvals):
+        val = val[order]
+        val.cumsum(out=val)
+        val = val[index]
+        val[1:] = val[1:] - val[:-1]
+        newval[:] = val
+        # Returning vals keeps the original array dimensions, which causes an error if more than one element is
+        # connected to the same bus. Instead, we create a second tuple of arrays on which we map the results.
+        # Todo: Check if this workaround causes no problems
+    return (bus,) + newvals
+
+
+def get_indices(selection, lookup, fused_indices=True):
+    """
+    Helper function during pd2mpc conversion. It resolves the mapping from a
+    given selection of indices to the actual indices, using a dict lookup being
+    passed as well.
+
+    :param selection: Indices we want to select
+    :param lookup: The mapping itself
+    :param fused_indices: Flag which way the conversion is working.
+    :return:
+    """
+    if fused_indices:
+        return np.array([lookup[k] for k in selection], dtype=np.int64)
+    else:
+        return np.array([lookup["before_fuse"][k] for k in selection], dtype=np.int64)
+
+
+def _get_values(source, selection, lookup):
+    """
+    Returns values for a selection of values after a lookup.
+
+    :param source: The array of values to select from.
+    :param selection: An array of keys, for the selection.
+    :param lookup: The mapping to resolve actual indices of the
+    value array from the selection.
+    :return:
+    """
+    v = np.zeros(len(selection))
+    for i, k in enumerate(selection):
+        v[i] = source[lookup[np.int64(k)]]
+    return v
+
+
+def ensure_iterability(var, len_=None):
+    """
+    Ensures iterability of a variable (and also the length if given).
+
+    Examples
+    --------
+    >>> ensure_iterability([1, 2])
+    [1, 2]
+    >>> ensure_iterability(1)
+    [1]
+    >>> ensure_iterability("Hi")
+    ["Hi"]
+    >>> ensure_iterability([1, 2], len_=2)
+    [1, 2]
+    >>> ensure_iterability([1, 2], len_=3)
+    ValueError("Length of variable differs from 3.")
+    """
+    if hasattr(var, "__iter__") and not isinstance(var, str):
+        if isinstance(len_, int) and len(var) != len_:
+            raise ValueError("Length of variable differs from %i." % len_)
+    else:
+        len_ = len_ or 1
+        var = [var] * len_
+    return var
+
+
+def read_from_net(net, element, index, variable, flag='auto'):
+    """
+    Reads values from the specified element table at the specified index in the column according to the specified variable
+    Chooses the method to read based on flag
+
+    Parameters
+    ----------
+    net
+    element : str
+        element table in pandapower net; can also be a results table
+    index : int or array_like
+        index of the element table where values are read from
+    variable : str
+        column of the element table
+    flag : str
+        defines which underlying function to use, can be one of ['auto', 'single_index', 'all_index', 'loc', 'object']
+
+    Returns
+    -------
+    values
+        the values of the variable for the element table according to the index
+    """
+    if flag == "single_index":
+        return _read_from_single_index(net, element, variable, index)
+    elif flag == "all_index":
+        return _read_from_all_index(net, element, variable)
+    elif flag == "loc":
+        return _read_with_loc(net, element, variable, index)
+    elif flag == "object":
+        return _read_from_object_attribute(net, element, variable, index)
+    elif flag == "auto":
+        auto_flag, auto_variable = _detect_read_write_flag(net, element, index, variable)
+        return read_from_net(net, element, index, auto_variable, auto_flag)
+    else:
+        raise NotImplementedError("read: flag must be one of ['auto', 'single_index', 'all_index', 'loc', 'object']")
+
+
+def write_to_net(net, element, index, variable, values, flag='auto'):
+    """
+    Writes values to the specified element table at the specified index in the column according to the specified variable
+    Chooses the method to write based on flag
+
+    Parameters
+    ----------
+    net
+    element : str
+        element table in pandapower net
+    index : int or array_like
+        index of the element table where values are written to
+    variable : str
+        column of the element table
+    flag : str
+        defines which underlying function to use, can be one of ['auto', 'single_index', 'all_index', 'loc', 'object']
+
+    Returns
+    -------
+    None
+    """
+    # write functions faster, depending on type of element_index
+    if flag == "single_index":
+        _write_to_single_index(net, element, index, variable, values)
+    elif flag == "all_index":
+        _write_to_all_index(net, element, variable, values)
+    elif flag == "loc":
+        _write_with_loc(net, element, index, variable, values)
+    elif flag == "object":
+        _write_to_object_attribute(net, element, index, variable, values)
+    elif flag == "auto":
+        auto_flag, auto_variable = _detect_read_write_flag(net, element, index, variable)
+        write_to_net(net, element, index, auto_variable, values, auto_flag)
+    else:
+        raise NotImplementedError("write: flag must be one of ['auto', 'single_index', 'all_index', 'loc', 'object']")
+
+
+def _detect_read_write_flag(net, element, index, variable):
+    if variable.startswith('object'):
+        # write to object attribute
+        return "object", variable.split(".")[1]
+    elif isinstance(index, numbers.Number):
+        # use .at if element_index is integer for speedup
+        return "single_index", variable
+    # commenting this out for now, see issue 609
+    # elif net[element].index.equals(Index(index)):
+    #     # use : indexer if all elements are in index
+    #     return "all_index", variable
+    else:
+        # use common .loc
+        return "loc", variable
+
+
+# read functions:
+def _read_from_single_index(net, element, variable, index):
+    return net[element].at[index, variable]
+
+
+def _read_from_all_index(net, element, variable):
+    return net[element].loc[:, variable].values
+
+
+def _read_with_loc(net, element, variable, index):
+    return net[element].loc[index, variable].values
+
+
+def _read_from_object_attribute(net, element, variable, index):
+    if hasattr(index, '__iter__') and len(index) > 1:
+        values = np.array(shape=index.shape)
+        for i, idx in enumerate(index):
+            values[i] = getattr(net[element]["object"].at[idx], variable)
+    else:
+        values = getattr(net[element]["object"].at[index], variable)
+    return values
+
+
+# write functions:
+def _write_to_single_index(net, element, index, variable, values):
+    net[element].at[index, variable] = values
+
+
+def _write_to_all_index(net, element, variable, values):
+    net[element].loc[:, variable] = values
+
+
+def _write_with_loc(net, element, index, variable, values):
+    net[element].loc[index, variable] = values
+
+
+def _write_to_object_attribute(net, element, index, variable, values):
+    if hasattr(index, '__iter__') and len(index) > 1:
+        for idx, val in zip(index, values):
+            setattr(net[element]["object"].at[idx], variable, val)
+    else:
+        setattr(net[element]["object"].at[index], variable, values)
+
+
+def _set_isolated_nodes_out_of_service(ppc, bus_not_reachable, dc=False):
+    isolated_nodes = np.where(bus_not_reachable)[0]
+    if len(isolated_nodes) > 0:
+        logger.debug("There are isolated buses in the network! (%i nodes in the PPC)"%len(isolated_nodes))
+        # set buses in ppc out of service
+        if dc:
+            ppc['bus_dc'][isolated_nodes, DC_BUS_TYPE] = DC_NONE
+            pus = qus = 0  # DC loads / sgens not implemented
+        else:
+            ppc['bus'][isolated_nodes, BUS_TYPE] = NONE
+
+            pus = abs(ppc['bus'][isolated_nodes, PD] * 1e3).sum()
+            qus = abs(ppc['bus'][isolated_nodes, QD] * 1e3).sum()
+            if pus > 0 or qus > 0:
+                logger.debug("%.0f kW active and %.0f kVar reactive power are unsupplied" % (pus, qus))
+    else:
+        pus = qus = 0
+
+    return isolated_nodes, pus, qus, ppc
+
+
+def _check_connectivity_opf(ppc):
+    """
+    Checks if the ppc contains isolated buses and changes slacks to PV nodes if multiple slacks are
+    in net.
+    :param ppc: pypower case file
+    :return:
+    """
+    br_status = ppc['branch'][:, BR_STATUS].astype(bool)
+    nobranch = ppc['branch'][br_status, :].shape[0]
+    nobus = ppc['bus'].shape[0]
+    bus_from = ppc['branch'][br_status, F_BUS].real.astype(np.int64)
+    bus_to = ppc['branch'][br_status, T_BUS].real.astype(np.int64)
+    slacks = ppc['bus'][ppc['bus'][:, BUS_TYPE] == 3, BUS_I].astype(np.int64)
+
+    adj_matrix = sp.sparse.coo_matrix((np.ones(nobranch),
+                                       (bus_from, bus_to)),
+                                      shape=(nobus, nobus))
+
+    bus_not_reachable = np.ones(ppc["bus"].shape[0], dtype=bool)
+    slack_set = set(slacks)
+    for slack in slacks:
+        if ppc['bus'][slack, BUS_TYPE] == PV:
+            continue
+        reachable = sp.sparse.csgraph.breadth_first_order(adj_matrix, slack, False, False)
+        bus_not_reachable[reachable] = False
+        reach_set = set(reachable)
+        intersection = slack_set & reach_set
+        if len(intersection) > 1:
+            # if slack is in reachable other slacks are connected to this one. Set it to Gen bus
+            demoted_slacks = list(intersection - {slack})
+            ppc['bus'][demoted_slacks, BUS_TYPE] = PV
+            logger.warning("Multiple connected slacks in one area found. This would probably lead "
+                           "to non-convergence of the OPF. Therefore, all but one slack (ext_grid)"
+                           " were changed to gens. To avoid undesired behaviour, rather convert the"
+                           " slacks to gens yourself and set slack=True for only one of them.")
+
+    isolated_nodes, pus, qus, ppc = _set_isolated_nodes_out_of_service(ppc, bus_not_reachable)
+    return isolated_nodes, pus, qus
+
+
+def _check_connectivity(ppc):
+    """
+    Checks if the ppc contains isolated buses. If yes this isolated buses are set out of service
+    :param ppc: pypower case file
+    :return:
+    """
+    br_status = ppc['branch'][:, BR_STATUS].astype(bool)
+    nobranch = ppc['branch'][br_status, :].shape[0]
+    nobus = ppc['bus'].shape[0]
+    bus_from = ppc['branch'][br_status, F_BUS].real.astype(np.int64)
+    bus_to = ppc['branch'][br_status, T_BUS].real.astype(np.int64)
+    slacks = ppc['bus'][ppc['bus'][:, BUS_TYPE] == REF, BUS_I]
+    tcsc_status = ppc["tcsc"][:, TCSC_STATUS].real.astype(bool)
+    notcsc = ppc["tcsc"][tcsc_status, :].shape[0]
+    bus_from_tcsc = ppc["tcsc"][tcsc_status, TCSC_F_BUS].real.astype(np.int64)
+    bus_to_tcsc = ppc["tcsc"][tcsc_status, TCSC_T_BUS].real.astype(np.int64)
+    ssc_status = ppc["ssc"][:, SSC_STATUS].real.astype(bool)
+    nossc = ppc["ssc"][ssc_status, :].shape[0]
+    bus_from_ssc = ppc["ssc"][ssc_status, SSC_BUS].real.astype(np.int64)
+    bus_to_ssc = ppc["ssc"][ssc_status, SSC_INTERNAL_BUS].real.astype(np.int64)
+    vsc_status = ppc["vsc"][:, VSC_STATUS].real.astype(bool)
+    novsc = ppc["vsc"][vsc_status, :].shape[0]
+    bus_from_vsc = ppc["vsc"][vsc_status, VSC_BUS].real.astype(np.int64)
+    bus_to_vsc = ppc["vsc"][vsc_status, VSC_INTERNAL_BUS].real.astype(np.int64)
+
+    # we create a "virtual" bus thats connected to all slack nodes and start the connectivity
+    # search at this bus
+    bus_from = np.hstack([bus_from, bus_from_tcsc, bus_from_ssc, bus_from_vsc, slacks])
+    bus_to = np.hstack([bus_to, bus_to_tcsc, bus_to_ssc, bus_to_vsc, np.ones(len(slacks)) * nobus])
+    nolinks = nobranch + notcsc + nossc + novsc + len(slacks)
+
+    adj_matrix = sp.sparse.coo_matrix((np.ones(nolinks), (bus_from, bus_to)), shape=(nobus + 1, nobus + 1))
+
+    reachable = sp.sparse.csgraph.breadth_first_order(adj_matrix, nobus, False, False)
+    # TODO: the former impl. excluded ppc buses that are already oos, but is this necessary ?
+    # if so: bus_not_reachable = np.hstack([ppc['bus'][:, BUS_TYPE] != 4, np.array([False])])
+    bus_not_reachable = np.ones(ppc["bus"].shape[0] + 1, dtype=bool)
+    bus_not_reachable[reachable] = False
+    isolated_nodes, pus, qus, ppc = _set_isolated_nodes_out_of_service(ppc, bus_not_reachable)
+
+    # DC system
+    nobus_dc = ppc['bus_dc'].shape[0]
+    if nobus_dc > 0:
+        bus_from_vsc_dc = ppc["vsc"][vsc_status, VSC_INTERNAL_BUS_DC].real.astype(np.int64)
+        bus_to_vsc_dc = ppc["vsc"][vsc_status, VSC_BUS_DC].real.astype(np.int64)
+
+        br_dc_status = ppc['branch_dc'][:, DC_BR_STATUS].astype(bool)
+        nobranch_dc = ppc['branch_dc'][br_dc_status, :].shape[0]
+        slacks_dc = ppc['bus_dc'][(ppc['bus_dc'][:, DC_BUS_TYPE] == DC_REF) |
+                                  (ppc['bus_dc'][:, DC_BUS_TYPE] == DC_B2B), BUS_I]
+
+        bus_from_dc = ppc['branch_dc'][br_dc_status, DC_F_BUS].real.astype(np.int64)
+        bus_to_dc = ppc['branch_dc'][br_dc_status, DC_T_BUS].real.astype(np.int64)
+
+        bus_from_dc = np.hstack([bus_from_dc, bus_from_vsc_dc, slacks_dc])
+        bus_to_dc = np.hstack([bus_to_dc, bus_to_vsc_dc, np.ones(len(slacks_dc)) * nobus_dc])
+        nolinks_dc = nobranch_dc + novsc + len(slacks_dc)
+
+        adj_matrix_dc = sp.sparse.coo_matrix((np.ones(nolinks_dc), (bus_from_dc, bus_to_dc)),
+                                             shape=(nobus_dc + 1, nobus_dc + 1))
+
+        reachable_dc = sp.sparse.csgraph.breadth_first_order(adj_matrix_dc, nobus_dc, False, False)
+        bus_dc_not_reachable = np.ones(ppc["bus_dc"].shape[0] + 1, dtype=bool)
+        bus_dc_not_reachable[reachable_dc] = False
+        isolated_nodes_dc, pus_dc, qus_dc, ppc = _set_isolated_nodes_out_of_service(ppc, bus_dc_not_reachable, dc=True)
+    else:
+        isolated_nodes_dc, pus_dc, qus_dc = np.array([], dtype=np.int64), 0, 0
+
+    return isolated_nodes, pus, qus, isolated_nodes_dc, pus_dc, qus_dc
+
+
+def _subnetworks(ppc):
+    """
+    Return a list of lists of the connected buses of the network
+    :param ppc: pypower case file
+    :return:
+    """
+    br_status = ppc['branch'][:, BR_STATUS].astype(bool)
+    oos_bus = ppc['bus'][:, BUS_TYPE] == NONE
+    nobranch = ppc['branch'][br_status, :].shape[0]
+    nobus = ppc['bus'].shape[0]
+    bus_from = ppc['branch'][br_status, F_BUS].real.astype(np.int64)
+    bus_to = ppc['branch'][br_status, T_BUS].real.astype(np.int64)
+    # Note BUS_TYPE is never REF when the generator is out of service.
+    slacks = ppc['bus'][ppc['bus'][:, BUS_TYPE] == REF, BUS_I]
+
+    adj_matrix = sp.sparse.csr_matrix((np.ones(nobranch), (bus_from, bus_to)),
+                                      shape=(nobus, nobus))
+
+    # Set out of service buses to have no connections (*=0 instead of =0 to avoid sparcity warning).
+    mask = np.ones(nobus, dtype=bool)
+    mask[oos_bus] = False
+    adj_matrix = adj_matrix.multiply(mask[:, None])
+    adj_matrix = adj_matrix.multiply(mask[None, :])
+
+    traversed_buses = set()
+    subnets = []
+    for slack in slacks:
+        if slack in traversed_buses:
+            continue
+        reachable = sp.sparse.csgraph.breadth_first_order(
+            adj_matrix, slack, directed=False, return_predecessors=False)
+        traversed_buses |= set(reachable)
+        subnets.append(list(reachable))
+    return subnets
+
+
+def _python_set_elements_oos(ti, tis, bis, lis):  # pragma: no cover
+    for i in range(len(ti)):
+        if tis[i] and bis[ti[i]]:
+            lis[i] = True
+
+
+def _python_set_isolated_buses_oos(bus_in_service, ppc_bus_isolated,
+                                   bus_lookup):  # pragma: no cover
+    for k in range(len(bus_in_service)):
+        if ppc_bus_isolated[bus_lookup[k]]:
+            bus_in_service[k] = False
+
+
+try:
+    get_values = jit(nopython=True, cache=True)(_get_values)
+    set_elements_oos = jit(nopython=True, cache=True)(_python_set_elements_oos)
+    set_isolated_buses_oos = jit(nopython=True, cache=True)(_python_set_isolated_buses_oos)
+except RuntimeError:
+    get_values = jit(nopython=True, cache=False)(_get_values)
+    set_elements_oos = jit(nopython=True, cache=False)(_python_set_elements_oos)
+    set_isolated_buses_oos = jit(nopython=True, cache=False)(_python_set_isolated_buses_oos)
+
+
+def _select_is_elements_numba(net, isolated_nodes=None, isolated_nodes_dc=None, sequence=None):
+    """
+    Selects in-service elements in the grid (both AC and DC) based on the network's state
+    and sets this information in the internal lookups.
+    If provided, isolated buses (AC and DC) are additionally considered as not in service.
+    The function sets elements out of service based on their direct connectivity to
+    in-service buses, and also based on controllability flags in 'load', 'sgen', and 'storage'
+    during optimal power flow (OPF) mode.
+
+    Parameters:
+    -----------
+    net : pandapowerNet
+        The grid data structure containing information about the buses, loads, lines, etc.
+
+    isolated_nodes : list or ndarray, optional (default=None)
+        List or array of isolated nodes (AC) in the network. If provided, the isolated nodes are
+        set as out of service.
+
+    isolated_nodes_dc : list or ndarray, optional (default=None)
+        List or array of isolated nodes (DC) in the network. If provided, the isolated DC nodes are
+        set as out of service.
+
+    sequence : str, optional (default=None)
+        Used when multi-sequence data is present in the network (like in fault studies).
+        If provided, it selects the specific sequence data in the network.
+
+    Returns:
+    --------
+    is_elements : dict
+        A dictionary containing boolean arrays or lists representing the in-service state
+        of various elements (like 'load', 'gen', 'line', etc.) in the network.
+
+    Notes:
+    ------
+    1. The function checks and considers both AC and DC elements in the grid.
+    2. If the grid has VSC elements and auxiliary lookup data, the isolated auxiliary buses
+       for the VSC elements are also set out of service.
+    """
+    # is missing sgen_controllable and load_controllable
+    if len(net.bus) > 0:  # preparing for the possibility of not having any AC buses but just DC
+        max_bus_idx = np.max(net["bus"].index.values)
+        bus_in_service = np.zeros(max_bus_idx + 1, dtype=bool)
+        bus_in_service[net["bus"].index.values] = net["bus"]["in_service"].values.astype(bool)
+    else:
+        bus_in_service = np.array([], dtype=bool)
+    if len(net.bus_dc) > 0:
+        max_bus_dc_idx = np.max(net["bus_dc"].index.values)
+        bus_dc_in_service = np.zeros(max_bus_dc_idx + 1, dtype=bool)
+        bus_dc_in_service[net["bus_dc"].index.values] = net["bus_dc"]["in_service"].values.astype(bool)
+    else:
+        bus_dc_in_service = np.array([], dtype=bool)
+    if isolated_nodes_dc is not None and len(isolated_nodes_dc) > 0:
+        ppc = net["_ppc"]
+        ppc_bus_dc_isolated = np.zeros(ppc["bus_dc"].shape[0], dtype=bool)
+        ppc_bus_dc_isolated[isolated_nodes_dc] = True
+        set_isolated_buses_oos(bus_dc_in_service, ppc_bus_dc_isolated, net["_pd2ppc_lookups"]["bus_dc"])
+    if isolated_nodes is not None and len(isolated_nodes) > 0:
+        ppc = net["_ppc"] if sequence is None else net["_ppc%s" % sequence]
+        ppc_bus_isolated = np.zeros(ppc["bus"].shape[0], dtype=bool)
+        ppc_bus_isolated[isolated_nodes] = True
+        set_isolated_buses_oos(bus_in_service, ppc_bus_isolated, net["_pd2ppc_lookups"]["bus"])
+    #    mode = net["_options"]["mode"]
+    elements_ac = ["load", "motor", "sgen", "asymmetric_load", "asymmetric_sgen", "gen",
+                   "ward", "xward", "shunt", "ext_grid", "storage", "svc", "ssc", "vsc"]  # ,"impedance_load"
+    elements_dc = ["vsc"]
+    is_elements = dict()
+    for element_table_list, bus_table, bis in zip((elements_ac, elements_dc),
+                                                  ("bus", "bus_dc"), (bus_in_service, bus_dc_in_service)):
+        for element_table in element_table_list:
+            num_elements = len(net[element_table].index)
+            element_in_service = np.zeros(num_elements, dtype=bool)
+            if num_elements > 0:
+                element_df = net[element_table]
+                set_elements_oos(element_df[bus_table].values, element_df["in_service"].values,
+                                 bis, element_in_service)
+            # load, sgen, storage only in elements_ac so this will only be executed once:
+            if net["_options"]["mode"] == "opf" and element_table in ["load", "sgen", "storage"]:
+                if "controllable" in net[element_table]:
+                    controllable = net[element_table].controllable.fillna(False).values.astype(bool)
+                    controllable_in_service = controllable & element_in_service
+                    if controllable_in_service.any():
+                        is_elements["%s_controllable" % element_table] = controllable_in_service
+                        element_in_service = element_in_service & ~controllable_in_service
+            # if element_table has both bus and bus_dc e.g. "vsc":
+            is_elements[element_table] = is_elements.get(element_table, True) & element_in_service
+
+    if len(net.vsc) > 0 and "aux" in net["_pd2ppc_lookups"]:
+        # reasoning: it can be that there are isolated DC buses. But they are only discovered
+        # after the connectivity check. Afterwards, the connected VSC elements are set out of service
+        # But after this happens, the VSC element auxiliary buses must be set out of service, too
+        # This does not happen because for that we would need to perform another connectivity check
+        # So we do it by hand here:
+        vsc_aux_isolated = net["_pd2ppc_lookups"]["aux"]["vsc"][~is_elements["vsc"]]
+        # vsc_aux_isolated = net["_pd2ppc_lookups"]["aux"]["vsc"][~is_elements["vsc"] |
+        #                    ppc_bus_isolated[net["_pd2ppc_lookups"]["aux"]["vsc"]] |
+        #                    ppc_bus_isolated[net._ppc["vsc"][:, VSC_BUS].astype(np.int64)]]
+        net._ppc["bus"][vsc_aux_isolated, BUS_TYPE] = NONE
+        # if there are no in service VSC that define the DC slack node, we must change the DC slack to type P
+        bus_dc_slack = net._ppc["bus_dc"][:, DC_BUS_TYPE] == DC_REF
+        bus_dc_with_vsc = np.r_[net._ppc["vsc"][is_elements["vsc"], VSC_BUS_DC], net._ppc["vsc"][is_elements["vsc"], VSC_INTERNAL_BUS_DC]]
+        bus_dc_to_change = bus_dc_slack & (~np.isin(net._ppc["bus_dc"][:, DC_BUS_I], bus_dc_with_vsc))
+        net._ppc["bus_dc"][bus_dc_to_change, DC_BUS_TYPE] = DC_P
+
+        # if the AC bus is defined as REF only because it is connected to a vsc, and the vsc is out of service,
+        # it cannot be a REF bus anymore
+        bus_ac_slack = net._ppc["bus"][:, BUS_TYPE] == REF
+        bus_ac_with_vsc = net._ppc["vsc"][is_elements["vsc"], VSC_BUS]
+        bus_ac_to_change = (bus_ac_slack & (~np.isin(net._ppc["bus"][:, BUS_I], bus_ac_with_vsc)) &
+                            (~np.isin(net._ppc["bus"][:, BUS_I], net._ppc["internal"]["ac_slack_buses"])))
+        # changing just to PQ is OK because the setting of type PV happens later in build_gen
+        net._ppc["bus"][bus_ac_to_change, BUS_TYPE] = PQ
+
+    is_elements["bus_is_idx"] = net["bus"].index.values[bus_in_service[net["bus"].index.values]]
+    is_elements["bus_dc_is_idx"] = net["bus_dc"].index.values[bus_dc_in_service[net["bus_dc"].index.values]]
+    is_elements["line_is_idx"] = net["line"].index[net["line"].in_service.values]
+    is_elements["line_dc_is_idx"] = net["line_dc"].index[net["line_dc"].in_service.values]
+    return is_elements
+
+
+def _add_ppc_options(net, calculate_voltage_angles, trafo_model, check_connectivity, mode,
+                     switch_rx_ratio, enforce_q_lims, recycle, delta=1e-10,
+                     voltage_depend_loads=False, trafo3w_losses="hv", init_vm_pu=1.0,
+                     init_va_degree=0, p_lim_default=1e9, q_lim_default=1e9,
+                     neglect_open_switch_branches=False, consider_line_temperature=False,
+                     distributed_slack=False, tdpf=False, tdpf_update_r_theta=True, tdpf_delay_s=None):
+    """
+    creates dictionary for pf, opf and short circuit calculations from input parameters.
+    """
+    # if recycle is None:
+    #     recycle = dict(trafo=False, bus_pq=False, bfsw=False)
+
+    init_results = (isinstance(init_vm_pu, str) and (init_vm_pu == "results")) or \
+                   (isinstance(init_va_degree, str) and (init_va_degree == "results"))
+
+    options = {
+        "calculate_voltage_angles": calculate_voltage_angles,
+        "trafo_model": trafo_model,
+        "check_connectivity": check_connectivity,
+        "mode": mode,
+        "switch_rx_ratio": switch_rx_ratio,
+        "enforce_q_lims": enforce_q_lims,
+        "recycle": recycle,
+        "voltage_depend_loads": voltage_depend_loads,
+        "consider_line_temperature": consider_line_temperature,
+        "tdpf": tdpf,
+        "tdpf_update_r_theta": tdpf_update_r_theta,
+        "tdpf_delay_s": tdpf_delay_s,
+        "distributed_slack": distributed_slack,
+        "delta": delta,
+        "trafo3w_losses": trafo3w_losses,
+        "init_vm_pu": init_vm_pu,
+        "init_va_degree": init_va_degree,
+        "init_results": init_results,
+        "p_lim_default": p_lim_default,
+        "q_lim_default": q_lim_default,
+        "neglect_open_switch_branches": neglect_open_switch_branches,
+    }
+    _add_options(net, options)
+
+
+def _check_bus_index_and_print_warning_if_high(net, n_max=1e7):
+    max_bus = max(net.bus.index.values)
+    if max_bus >= n_max > len(net["bus"]):
+        logger.warning("Maximum bus index is high (%i). You should avoid high bus indices because "
+                       "of perfomance reasons. Try resetting the bus indices with the toolbox "
+                       "function create_continuous_bus_index()" % max_bus)
+
+
+def _check_gen_index_and_print_warning_if_high(net, n_max=1e7):
+    if net.gen.empty:
+        return
+    max_gen = max(net.gen.index.values)
+    if max_gen >= n_max > len(net["gen"]):
+        logger.warning("Maximum generator index is high (%i). You should avoid high generator "
+                       "indices because of perfomance reasons. Try resetting the bus indices with "
+                       "the toolbox function create_continuous_elements_index()" % max_gen)
+
+
+def _add_pf_options(net, tolerance_mva, trafo_loading, numba, ac,
+                    algorithm, max_iteration, **kwargs):
+    """
+    creates dictionary for pf, opf and short circuit calculations from input parameters.
+    """
+
+    options = {
+        "tolerance_mva": tolerance_mva,
+        "trafo_loading": trafo_loading,
+        "numba": numba,
+        "ac": ac,
+        "algorithm": algorithm,
+        "max_iteration": max_iteration
+    }
+
+    options.update(kwargs)  # update options with some algorithm-specific parameters
+    _add_options(net, options)
+
+
+def _add_opf_options(net, trafo_loading, ac, v_debug=False, **kwargs):
+    """
+    creates dictionary for pf, opf and short circuit calculations from input parameters.
+    """
+    options = {
+        "trafo_loading": trafo_loading,
+        "ac": ac,
+        "v_debug": v_debug
+    }
+
+    options.update(kwargs)  # update options with some algorithm-specific parameters
+    _add_options(net, options)
+
+
+def _add_sc_options(net, fault, case, lv_tol_percent, tk_s, topology, r_fault_ohm,
+                    x_fault_ohm, kappa, ip, ith, branch_results,
+                    kappa_method, return_all_currents,
+                    inverse_y, use_pre_fault_voltage):
+    """
+    creates dictionary for pf, opf and short circuit calculations from input parameters.
+    """
+    options = {
+        "fault": fault,
+        "case": case,
+        "lv_tol_percent": lv_tol_percent,
+        "tk_s": tk_s,
+        "topology": topology,
+        "r_fault_ohm": r_fault_ohm,
+        "x_fault_ohm": x_fault_ohm,
+        "kappa": kappa,
+        "ip": ip,
+        "ith": ith,
+        "branch_results": branch_results,
+        "kappa_method": kappa_method,
+        "return_all_currents": return_all_currents,
+        "inverse_y": inverse_y,
+        "use_pre_fault_voltage": use_pre_fault_voltage
+    }
+    _add_options(net, options)
+
+
+def _add_options(net, options):
+    # double_parameters = set(net.__internal_options.keys()) & set(options.keys())
+    double_parameters = set(net._options.keys()) & set(options.keys())
+    if len(double_parameters) > 0:
+        raise UserWarning(
+            "Parameters always have to be unique! The following parameters where specified " +
+            "twice: %s" % double_parameters)
+    # net.__internal_options.update(options)
+    net._options.update(options)
+
+
+def _clean_up(net, res=True):
+    # mode = net.__internal_options["mode"]
+
+    # set internal selected _is_elements to None. This way it is not stored (saves disk space)
+    # net._is_elements = None
+
+    #    mode = net._options["mode"]
+    #    if res:
+    #        res_bus = net["res_bus_sc"] if mode == "sc" else \
+    #            net["res_bus_3ph"] if mode == "pf_3ph" else \
+    #                net["res_bus"]
+    #    if len(net["trafo3w"]) > 0:
+    #        buses_3w = net.trafo3w["ad_bus"].values
+    #        net["bus"].drop(buses_3w, inplace=True)
+    #        net["trafo3w"].drop(["ad_bus"], axis=1, inplace=True)
+    #        if res:
+    #            res_bus.drop(buses_3w, inplace=True)
+    #
+    #    if len(net["xward"]) > 0:
+    #        xward_buses = net["xward"]["ad_bus"].values
+    #        net["bus"].drop(xward_buses, inplace=True)
+    #        net["xward"].drop(["ad_bus"], axis=1, inplace=True)
+    #        if res:
+    #            res_bus.drop(xward_buses, inplace=True)
+    if len(net["dcline"]) > 0:
+        dc_gens = net.gen.index[(len(net.gen) - len(net.dcline) * 2):]
+        net.gen = net.gen.drop(dc_gens)
+        if res:
+            net.res_gen = net.res_gen.drop(dc_gens)
+
+
+def _set_isolated_buses_out_of_service(net, ppc):
+    # set disconnected buses out of service
+    # first check if buses are connected to branches
+    # I don't know why this dance with [X, :][:, [Y, Z]] (instead of [X, [Y, Z]]) is necessary:
+    disco = np.setxor1d(ppc["bus"][:, BUS_I].astype(np.int64),
+                        ppc["branch"][ppc["branch"][:, BR_STATUS] == 1, :][:, [F_BUS,T_BUS]].real.astype(np.int64).flatten())
+
+    # but also check if they may be the only connection to an ext_grid
+    net._isolated_buses = np.setdiff1d(disco, ppc['bus'][ppc['bus'][:, BUS_TYPE] == REF,
+                                                         BUS_I].real.astype(np.int64))
+    ppc["bus"][net._isolated_buses, BUS_TYPE] = NONE
+
+    # check DC buses - not connected to DC lines and not connected to VSC DC side
+    disco_dc = np.setxor1d(ppc["bus_dc"][:, DC_BUS_I].astype(np.int64),
+                           np.union1d(ppc["branch_dc"][ppc["branch_dc"][:, DC_BR_STATUS] == 1, :][:,
+                                      [DC_F_BUS, DC_T_BUS]].real.astype(np.int64).flatten(),
+                                      ppc["vsc"][ppc["vsc"][:, VSC_STATUS] == 1, VSC_BUS_DC].real.astype(np.int64)))
+
+    # but also check if they may be the only connection to an ext_grid
+    net._isolated_buses_dc = np.setdiff1d(disco_dc, ppc['bus_dc'][ppc['bus_dc'][:, DC_BUS_TYPE] == REF,
+                                                         DC_BUS_I].real.astype(np.int64))
+    ppc["bus_dc"][net._isolated_buses_dc, DC_BUS_TYPE] = DC_NONE
+
+
+def _write_lookup_to_net(net, element, element_lookup):
+    """
+    Updates selected lookups in net
+    """
+    net["_pd2ppc_lookups"][element] = element_lookup
+
+
+def _check_if_numba_is_installed(level="warning"):
+    if not NUMBA_INSTALLED:
+        msg = (
+            'numba cannot be imported and numba functions are disabled.\n'
+            'Probably the execution is slow.\n'
+            'Please install numba to gain a massive speedup.\n'
+            '(or if you prefer slow execution, set the flag numba=False to avoid this warning!)')
+        log_to_level(msg, logger, level)
+        return False
+    return NUMBA_INSTALLED
+
+
+
+def _check_lightsim2grid_compatibility(net, lightsim2grid, voltage_depend_loads, algorithm, distributed_slack, tdpf):
+    """
+    Implement some checks to decide whether the package lightsim2grid can be used. The package implements a backend for
+     power flow calculation in C++ and provides a speed-up. If lightsim2grid is "auto" (default), we don't bombard the
+     user with messages. Otherwise, if lightsim2grid is True bus cannot be used, we inform the user abot it.
+    """
+    if not lightsim2grid:
+        return False  # early return :)
+
+    if not lightsim2grid_available:
+        if lightsim2grid != "auto":
+            logger.info("option 'lightsim2grid' is True but the module lightsim2grid could not be imported. "
+                        "Falling back to pandapower implementation.")
+        return False
+    if algorithm != 'nr':  # todo implement lightsim2grid dc power flow and gauss-seidel power flow
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError(f"option 'lightsim2grid' is True but the algorithm {algorithm} not implemented.")
+    if voltage_depend_loads:
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and voltage-dependent loads detected.")
+    if (len(net.ext_grid.query("in_service")) + len(net.gen.query("slack & in_service"))) > 1 and not distributed_slack:
+        # lightsim2grid implements distributed_slack similarly to pandapower, but does not accept multiple slacks
+        # otherwise
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and multiple ext_grids are found, "
+                                  "but distributed_slack=False.")
+    if tdpf:
+        # tdpf not yet implemented in lightsim2grid
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and tdpf is True, TDPF not implemented yet.")
+
+    if len(net.shunt) and "controllable" in net.shunt and np.any(net.shunt.controllable):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and SVC controllable shunts are present, "
+                                  "SVC controllable shunts not implemented yet.")
+
+    if len(net.tcsc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and TCSC controllable impedances are present, "
+                                  "TCSC controllable impedances not implemented.")
+
+    if len(net.svc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and SVC controllable shunt elements are present, "
+                                  "SVC controllable shunt elements not implemented.")
+    if len(net.ssc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and SSC controllable shunt elements are present, "
+                                  "SVC controllable shunt elements not implemented.")
+    if len(net.vsc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and VSC controllable shunt elements are present, "
+                                  "VSC controllable shunt elements not implemented.")
+    if len(net.bus_dc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and DC buses are present, DC buses not implemented.")
+
+    if len(net.line_dc):
+        if lightsim2grid == "auto":
+            return False
+        raise NotImplementedError("option 'lightsim2grid' is True and DC lines are present, DC lines not implemented.")
+
+    return True
+
+
+def _check_tdpf_parameters(net, tdpf_update_r_theta, tdpf_delay_s):
+    required_columns = ["tdpf"]  # required, cannot be filled with assumptions
+    if "tdpf" not in net.line.columns:
+        tdpf_lines = np.array([])
+        # we raise the exception later
+    else:
+        tdpf_lines = net.line.loc[net.line.tdpf.fillna(False).astype(bool) & net.line.in_service].index.values
+
+    if len(tdpf_lines) == 0:
+        logger.info("TDPF: no relevant lines found")
+
+    # required for simplified approach if r_theta_kelvin_per_mw is provided, can be filled with simplified values:
+    default_values = {"temperature_degree_celsius": 20,  # starting temperature of lines
+                      "reference_temperature_degree_celsius": 20,  # reference temperature for line.r_ohm_per_km
+                      "air_temperature_degree_celsius": 35,  # temperature of air surrounding the conductors
+                      "alpha": 4.03e-3}  # thermal coefficient of resistance
+
+    if tdpf_update_r_theta:
+        # required for the detailed calculation of the weather effects, can be filled with default values:
+        default_values.update({"wind_speed_m_per_s": 0.6,  # wind speed
+                               "wind_angle_degree": 45,  # wind angle of attack
+                               "solar_radiation_w_per_sq_m": 900,  # solar radiation
+                               "solar_absorptivity": 0.5,  # coefficient of solar absorptivity
+                               "emissivity": 0.5})  # coefficient of solar emissivity
+        required_columns.append("conductor_outer_diameter_m")  # outer diameter of the conductor
+    else:
+        # make sure r_theta_kelvin_per_mw is provided
+        # (use the function pandapower.pf.create_jacobian_tdpf.calc_r_theta_from_t_rise)
+        # is relevant if a simplified method for calculating the line temperature is used
+        required_columns.append("r_theta_kelvin_per_mw")
+
+    if tdpf_delay_s:
+        # for thermal inertia, mass * thermal capacity of the conductor per unit length:
+        required_columns.append("mc_joule_per_m_k")
+
+    # if np.any(np.setdiff1d(net.line.columns, required_columns)):
+    #     raise UserWarning(f"TDPF: required columns missing in net.line: {required_columns}")
+
+    missing_columns = []
+    for col in required_columns:
+        if col not in net.line.columns or np.any(net.line.loc[tdpf_lines, col].isnull()):
+            missing_columns.append(col)
+
+    if len(missing_columns) > 0:
+        raise UserWarning(f"TDPF: required columns {missing_columns} are missing or have missing values")
+
+    # check if unsupported elements are included
+    if len(net.line.loc[net.line.index.isin(tdpf_lines) & (net.line.type == "cs")]) > 0 or \
+            "tdpf" in net.trafo or "tdpf" in net.trafo3w:
+        logger.warning("TDPF: temperature dependent power flow is only implemented for overhead lines")
+
+    # now fill in the default values
+    for col, val in default_values.items():
+        if col not in net.line.columns:
+            net.line[col] = np.nan
+        if np.any(np.isnan(net.line.loc[tdpf_lines, col])):
+            logger.info(f"TDPF: filling nan values in {col} with a default assumption of {val}")
+            net.line.loc[tdpf_lines, col] = net.line.loc[tdpf_lines, col].fillna(val)
+
+    if len(net.line.loc[net.line.index.isin(tdpf_lines) & (net.line.r_ohm_per_km == 0)]) > 0:
+        raise UserWarning("TDPF: temperature dependent power flow cannot be applied to lines that have r_ohm_per_km=0")
+
+
+# =============================================================================
+# Functions for 3 Phase Unbalanced Load Flow
+# =============================================================================
+
+# =============================================================================
+# Convert to three decoupled sequence networks
+# =============================================================================
+
+
+def X012_to_X0(X012):
+    return np.transpose(X012[0, :])
+
+
+def X012_to_X1(X012):
+    return np.transpose(X012[1, :])
+
+
+def X012_to_X2(X012):
+    return np.transpose(X012[2, :])
+
+
+# =============================================================================
+# Three decoupled sequence network to 012 matrix conversion
+# =============================================================================
+
+def combine_X012(X0, X1, X2):
+    comb = np.vstack((X0, X1, X2))
+    return comb
+
+
+# =============================================================================
+# Symmetrical transformation matrix
+# Tabc : 012 > abc
+# T012 : abc >012
+# =============================================================================
+
+def phase_shift_unit_operator(angle_deg):
+    return 1 * np.exp(1j * np.deg2rad(angle_deg))
+
+
+a = phase_shift_unit_operator(120)
+asq = phase_shift_unit_operator(-120)
+Tabc = np.array(
+    [
+        [1, 1, 1],
+        [1, asq, a],
+        [1, a, asq]
+    ])
+
+T012 = np.divide(np.array(
+    [
+        [1, 1, 1],
+        [1, a, asq],
+        [1, asq, a]
+    ]), 3)
+
+
+def sequence_to_phase(X012):
+    return np.asarray(np.matmul(Tabc, X012))
+
+
+def phase_to_sequence(Xabc):
+    return np.asarray(np.matmul(T012, Xabc))
+
+
+# def Y_phase_to_sequence(Xabc):
+#   return np.asarray(np.matmul(T012,Xabc,Tabc))
+# =============================================================================
+# Calculating Sequence Current from sequence Voltages
+# =============================================================================
+
+def I0_from_V012(V012, Y):
+    V0 = X012_to_X0(V012)
+    if type(Y) in [sp.sparse.csr_matrix, sp.sparse.csc_matrix]:
+        return np.asarray(np.matmul(Y.todense(), V0))
+    else:
+        return np.asarray(np.matmul(Y, V0))
+
+
+def I1_from_V012(V012, Y):
+    V1 = X012_to_X1(V012)[:, np.newaxis]
+    if type(Y) in [sp.sparse.csr_matrix, sp.sparse.csc_matrix]:
+        i1 = np.asarray(np.matmul(Y.todense(), V1))
+        return np.transpose(i1)
+    else:
+        i1 = np.asarray(np.matmul(Y, V1))
+        return np.transpose(i1)
+
+
+def I2_from_V012(V012, Y):
+    V2 = X012_to_X2(V012)
+    if type(Y) in [sp.sparse.csr_matrix, sp.sparse.csc_matrix]:
+        return np.asarray(np.matmul(Y.todense(), V2))
+    else:
+        return np.asarray(np.matmul(Y, V2))
+
+
+def V1_from_ppc(ppc):
+    return np.transpose(
+        np.array(
+            ppc["bus"][:, VM] * np.exp(1j * np.deg2rad(ppc["bus"][:, VA]))
+        )
+    )
+
+
+def V_from_I(Y, I):
+    return np.transpose(np.array(sp.sparse.linalg.spsolve(Y, I)))
+
+
+def I_from_V(Y, V):
+    if type(Y) in [sp.sparse.csr.csr_matrix, sp.sparse.csc.csc_matrix]:
+        return np.asarray(np.matmul(Y.todense(), V))
+    else:
+        return np.asarray(np.matmul(Y, V))
+
+
+# =============================================================================
+# Calculating Power
+# =============================================================================
+
+def S_from_VI_elementwise(V, I):
+    return np.multiply(V, I.conjugate())
+
+
+def I_from_SV_elementwise(S, V):
+    return np.conjugate(np.divide(S, V, out=np.zeros_like(S), where=V != 0))  # Return zero if div by zero
+
+
+def SVabc_from_SV012(S012, V012, n_res=None, idx=None):
+    if n_res is None:
+        n_res = S012.shape[1]
+    if idx is None:
+        idx = np.ones(n_res, dtype="bool")
+    I012 = np.array(np.zeros((3, n_res)), dtype=np.complex128)
+    I012[:, idx] = I_from_SV_elementwise(S012[:, idx], V012[:, idx])
+    Vabc = sequence_to_phase(V012)
+    Iabc = sequence_to_phase(I012)
+    Sabc = S_from_VI_elementwise(Vabc, Iabc)
+    return Sabc, Vabc
+
+
+def _add_auxiliary_elements(net):
+    if len(net.dcline) > 0:
+        _add_dcline_gens(net)
+
+
+def _add_dcline_gens(net):
+    from pandapower.create import create_gen
+    for dctab in net.dcline.itertuples():
+        pfrom = dctab.p_mw
+        pto = (pfrom * (1 - dctab.loss_percent / 100) - dctab.loss_mw)
+        pmax = dctab.max_p_mw
+        create_gen(net, bus=dctab.to_bus, p_mw=pto, vm_pu=dctab.vm_to_pu,
+                   min_p_mw=0, max_p_mw=pmax,
+                   max_q_mvar=dctab.max_q_to_mvar, min_q_mvar=dctab.min_q_to_mvar,
+                   in_service=dctab.in_service)
+        create_gen(net, bus=dctab.from_bus, p_mw=-pfrom, vm_pu=dctab.vm_from_pu,
+                   min_p_mw=-pmax, max_p_mw=0,
+                   max_q_mvar=dctab.max_q_from_mvar, min_q_mvar=dctab.min_q_from_mvar,
+                   in_service=dctab.in_service)
+
+
+def _replace_nans_with_default_limits(net, ppc):
+    qlim = net._options["q_lim_default"]
+    plim = net._options["p_lim_default"]
+
+    for matrix, column, default in [("gen", QMAX, qlim), ("gen", QMIN, -qlim), ("gen", PMIN, -plim),
+                                    ("gen", PMAX, plim), ("bus", VMAX, 2.0), ("bus", VMIN, 0.0),
+                                    ("bus_dc", DC_VMAX, 2.0), ("bus_dc", DC_VMIN, 0.0)]:
+        limits = ppc[matrix][:, [column]]
+        np.copyto(limits, default, where=np.isnan(limits))
+        ppc[matrix][:, [column]] = limits
+
+
+def _init_runpp_options(net, algorithm, calculate_voltage_angles, init,
+                        max_iteration, tolerance_mva, trafo_model,
+                        trafo_loading, enforce_q_lims, check_connectivity,
+                        voltage_depend_loads, passed_parameters=None,
+                        consider_line_temperature=False,
+                        distributed_slack=False,
+                        tdpf=False, tdpf_update_r_theta=True, tdpf_delay_s=None, **kwargs):
+    """
+    Inits _options in net for runpp.
+    """
+    overrule_options = {}
+    if passed_parameters is not None:
+        overrule_options = {key: val for key, val in net.user_pf_options.items()
+                            if key not in passed_parameters.keys()}
+
+    kwargs.update(overrule_options)
+
+    trafo3w_losses = kwargs.get("trafo3w_losses", "hv")
+    v_debug = kwargs.get("v_debug", False)
+    delta_q = kwargs.get("delta_q", 0)
+    switch_rx_ratio = kwargs.get("switch_rx_ratio", 2)
+    numba = kwargs.get("numba", True)
+    init_vm_pu = kwargs.get("init_vm_pu", None)
+    init_va_degree = kwargs.get("init_va_degree", None)
+    neglect_open_switch_branches = kwargs.get("neglect_open_switch_branches", False)
+    # recycle options
+    recycle = kwargs.get("recycle", None)
+    only_v_results = kwargs.get("only_v_results", False)
+    # scipy spsolve options in NR power flow
+    use_umfpack = kwargs.get("use_umfpack", True)
+    permc_spec = kwargs.get("permc_spec", None)
+    lightsim2grid = kwargs.get("lightsim2grid", "auto")
+
+    # for all the parameters from 'overrule_options' we need to collect them
+    # if they are used for any of the chjecks below:
+    algorithm = overrule_options.get("algorithm", algorithm)
+    calculate_voltage_angles = overrule_options.get("calculate_voltage_angles", calculate_voltage_angles)
+    init = overrule_options.get("init", init)
+    max_iteration = overrule_options.get("max_iteration", max_iteration)
+    voltage_depend_loads = overrule_options.get("voltage_depend_loads", voltage_depend_loads)
+    distributed_slack = overrule_options.get("distributed_slack", distributed_slack)
+    tdpf = overrule_options.get("tdpf", tdpf)
+    tdpf_update_r_theta = overrule_options.get("tdpf_update_r_theta", tdpf_update_r_theta)
+    tdpf_delay_s = overrule_options.get("tdpf_delay_s", tdpf_delay_s)
+    # the other parameters do not need to be collected manually:
+    # tolerance_mva, trafo_model, trafo_loading, enforce_q_lims, check_connectivity, consider_line_temperature
+
+    # check if numba is available and the corresponding flag
+    if numba:
+        numba = _check_if_numba_is_installed()
+
+    if voltage_depend_loads:
+        if not (np.any(net["load"]["const_z_percent"].values)
+                or np.any(net["load"]["const_i_percent"].values)):
+            voltage_depend_loads = False
+
+    lightsim2grid = _check_lightsim2grid_compatibility(net, lightsim2grid, voltage_depend_loads, algorithm,
+                                                       distributed_slack, tdpf)
+
+    ac = True
+    mode = "pf"
+    if calculate_voltage_angles == "auto":
+        calculate_voltage_angles = False
+        is_hv_bus = np.where(net.bus.vn_kv.values > 70)[0]
+        if any(is_hv_bus) > 0:
+            line_buses = set(net.line.from_bus.values) & set(net.line.to_bus.values)
+            hv_buses = net.bus.index[is_hv_bus]
+            if any(a in line_buses for a in hv_buses):
+                calculate_voltage_angles = True
+
+    default_max_iteration = {"nr": 10, "iwamoto_nr": 10, "bfsw": 100, "gs": 10000, "fdxb": 30,
+                             "fdbx": 30}
+    with_facts = net.svc.in_service.any() or net.tcsc.in_service.any() or \
+                 net.ssc.in_service.any() or net.vsc.in_service.any()
+
+    if with_facts and algorithm != "nr":
+        if algorithm != 'nr':
+            raise NotImplementedError('FACTS devices only implemented for Newton Raphson algorithm.')
+
+    if max_iteration == "auto":
+        # tdpf is an option rather than algorithm; svc need more iterations to converge
+        max_iteration = 30 if tdpf or with_facts else default_max_iteration[algorithm]
+
+    if init != "auto" and (init_va_degree is not None or init_vm_pu is not None):
+        raise ValueError("Either define initialization through 'init' or through 'init_vm_pu' and "
+                         "'init_va_degree'.")
+
+    init_from_results = init == "results" or \
+                        (isinstance(init_vm_pu, str) and init_vm_pu == "results") or \
+                        (isinstance(init_va_degree, str) and init_va_degree == "results")
+    if init_from_results and len(net.res_bus) == 0:
+        init = "auto"
+        init_vm_pu = None
+        init_va_degree = None
+
+    # FACTS devices can lead to the grid having isolated buses from the point of view of DC power flow, so choose 'flat'
+    if init == "auto":
+        if init_va_degree is None or (isinstance(init_va_degree, str) and init_va_degree == "auto"):
+            init_va_degree = "dc" if calculate_voltage_angles and not with_facts else "flat"
+        if init_vm_pu is None or (isinstance(init_vm_pu, str) and init_vm_pu == "auto"):
+            init_vm_pu = (net.ext_grid.query("in_service").vm_pu.values.sum() +
+                          net.gen.query("in_service").vm_pu.values.sum() +
+                          net.vsc.query("in_service & (control_mode_ac == 'slack')").control_value_ac.values.sum()) / \
+                         (len(net.ext_grid.query("in_service")) + len(net.gen.query("in_service")) +
+                          len(net.vsc.query("in_service & (control_mode_ac == 'slack')")))
+    elif init == "dc":
+        init_vm_pu = "flat"
+        init_va_degree = "dc"
+    else:
+        init_vm_pu = init
+        init_va_degree = init
+
+    if distributed_slack:
+        false_slack_weight_elms = [elm for elm in {
+            'asymmetric_load', 'asymmetric_sgen', 'load', 'sgen', 'shunt', 'storage',
+            'ward'} if "slack_weight" in net[elm].columns and net[elm].slack_weight.sum() > 0]
+        if len(false_slack_weight_elms):
+            logger.warning("Currently distributed_slack is implemented for 'ext_grid', 'gen' "
+                           "and 'xward' only, not for '" + "', '".join(
+                false_slack_weight_elms) + "'.")
+        if algorithm != 'nr':
+            raise NotImplementedError(
+                'Distributed slack is only implemented for Newton Raphson algorithm.')
+
+    if tdpf:
+        if algorithm != 'nr':
+            raise NotImplementedError('TDPF is only implemented for Newton Raphson algorithm.')
+        _check_tdpf_parameters(net, tdpf_update_r_theta, tdpf_delay_s)
+
+    # init options
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=calculate_voltage_angles,
+                     trafo_model=trafo_model, check_connectivity=check_connectivity,
+                     mode=mode, switch_rx_ratio=switch_rx_ratio, init_vm_pu=init_vm_pu,
+                     init_va_degree=init_va_degree, enforce_q_lims=enforce_q_lims, recycle=recycle,
+                     voltage_depend_loads=voltage_depend_loads, delta=delta_q,
+                     trafo3w_losses=trafo3w_losses,
+                     neglect_open_switch_branches=neglect_open_switch_branches,
+                     consider_line_temperature=consider_line_temperature,
+                     distributed_slack=distributed_slack,
+                     tdpf=tdpf, tdpf_update_r_theta=tdpf_update_r_theta, tdpf_delay_s=tdpf_delay_s)
+    _add_pf_options(net, tolerance_mva=tolerance_mva, trafo_loading=trafo_loading,
+                    numba=numba, ac=ac, algorithm=algorithm, max_iteration=max_iteration,
+                    v_debug=v_debug, only_v_results=only_v_results, use_umfpack=use_umfpack,
+                    permc_spec=permc_spec, lightsim2grid=lightsim2grid)
+    net._options.update(overrule_options)
+
+
+def _init_nx_options(net):
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=False,
+                     trafo_model="t", check_connectivity=False,
+                     mode="nx", switch_rx_ratio=2, init_vm_pu='flat', init_va_degree="flat",
+                     enforce_q_lims=False, recycle=False,
+                     voltage_depend_loads=False, delta=0, trafo3w_losses="hv")
+
+
+def _init_rundcpp_options(net, trafo_model, trafo_loading, recycle, check_connectivity,
+                          switch_rx_ratio, trafo3w_losses, **kwargs):
+    ac = False
+    numba = True
+    mode = "pf"
+    init = 'flat'
+
+    numba = _check_if_numba_is_installed()
+
+    # the following parameters have no effect if ac = False
+    calculate_voltage_angles = True
+    enforce_q_lims = False
+    algorithm = None
+    max_iteration = None
+    tolerance_mva = None
+    only_v_results = kwargs.get("only_v_results", False)
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=calculate_voltage_angles,
+                     trafo_model=trafo_model, check_connectivity=check_connectivity,
+                     mode=mode, switch_rx_ratio=switch_rx_ratio, init_vm_pu=init,
+                     init_va_degree=init, enforce_q_lims=enforce_q_lims, recycle=recycle,
+                     voltage_depend_loads=False, delta=0, trafo3w_losses=trafo3w_losses)
+    _add_pf_options(net, tolerance_mva=tolerance_mva, trafo_loading=trafo_loading,
+                    numba=numba, ac=ac, algorithm=algorithm, max_iteration=max_iteration,
+                    only_v_results=only_v_results)
+
+
+def _init_runopp_options(net, calculate_voltage_angles, check_connectivity, switch_rx_ratio, delta,
+                         init, numba, trafo3w_losses, consider_line_temperature=False, **kwargs):
+    if numba:
+        numba = _check_if_numba_is_installed()
+    mode = "opf"
+    ac = True
+    trafo_model = "t"
+    trafo_loading = 'current'
+    enforce_q_lims = True
+    recycle = None
+    only_v_results = False
+    # scipy spsolve options in NR power flow
+    use_umfpack = kwargs.get("use_umfpack", True)
+    permc_spec = kwargs.get("permc_spec", None)
+    lightsim2grid = kwargs.get("lightsim2grid", False)
+
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=calculate_voltage_angles,
+                     trafo_model=trafo_model, check_connectivity=check_connectivity,
+                     mode=mode, switch_rx_ratio=switch_rx_ratio, init_vm_pu=init,
+                     init_va_degree=init, enforce_q_lims=enforce_q_lims, recycle=recycle,
+                     voltage_depend_loads=kwargs.get("voltage_depend_loads", False),
+                     delta=delta, trafo3w_losses=trafo3w_losses,
+                     consider_line_temperature=consider_line_temperature)
+    _add_opf_options(net, trafo_loading=trafo_loading, ac=ac, init=init, numba=numba,
+                     lightsim2grid=lightsim2grid,
+                     only_v_results=only_v_results, use_umfpack=use_umfpack, permc_spec=permc_spec)
+
+
+def _init_rundcopp_options(net, check_connectivity, switch_rx_ratio, delta, trafo3w_losses,
+                           **kwargs):
+    mode = "opf"
+    ac = False
+    init = "flat"
+    trafo_model = "t"
+    trafo_loading = 'current'
+    calculate_voltage_angles = True
+    enforce_q_lims = True
+    recycle = None
+    only_v_results = False
+    # scipy spsolve options in NR power flow
+    use_umfpack = kwargs.get("use_umfpack", True)
+    permc_spec = kwargs.get("permc_spec", None)
+    # net.__internal_options = {}
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=calculate_voltage_angles,
+                     trafo_model=trafo_model, check_connectivity=check_connectivity,
+                     mode=mode, switch_rx_ratio=switch_rx_ratio, init_vm_pu=init,
+                     init_va_degree=init, enforce_q_lims=enforce_q_lims, recycle=recycle,
+                     voltage_depend_loads=False, delta=delta, trafo3w_losses=trafo3w_losses)
+    _add_opf_options(net, trafo_loading=trafo_loading, init=init, ac=ac,
+                     only_v_results=only_v_results,
+                     use_umfpack=use_umfpack, permc_spec=permc_spec)
+
+
+def _init_runse_options(net, v_start, delta_start, calculate_voltage_angles,
+                        **kwargs):
+
+    check_connectivity = kwargs.get("check_connectivity", True)
+    trafo_model = kwargs.get("trafo_model", "t")
+    trafo3w_losses = kwargs.get("trafo3w_losses", "hv")
+    switch_rx_ratio = kwargs.get("switch_rx_ratio", 2)
+
+    net._options = {}
+    _add_ppc_options(net, calculate_voltage_angles=calculate_voltage_angles,
+                     trafo_model=trafo_model, check_connectivity=check_connectivity,
+                     mode="pf", switch_rx_ratio=switch_rx_ratio, init_vm_pu=v_start,
+                     init_va_degree=delta_start, enforce_q_lims=False, recycle=None,
+                     voltage_depend_loads=False, trafo3w_losses=trafo3w_losses)
+    _add_pf_options(net, tolerance_mva="1e-8", trafo_loading="power",
+                    numba=False, ac=True, algorithm="nr", max_iteration="auto",
+                    only_v_results=False)
+
+
+def _internal_stored(net, ac=True):
+    """
+
+    The function newtonpf() needs these variables as inputs:
+    Ybus, Sbus, V0, pv, pq, ppci, options
+
+    Parameters
+    ----------
+    net - the pandapower net
+
+    Returns
+    -------
+    True if all variables are stored False otherwise
+
+    """
+    # checks if all internal variables are stored in net, which are needed for a power flow
+
+    if net["_ppc"] is None:
+        return False
+
+    if ac:
+        mandatory_pf_variables = ["J", "bus", "gen", "branch", "baseMVA", "V", "pv", "pq", "ref",
+                                  "Ybus", "Yf", "Yt", "Sbus", "ref_gens"]
+    else:
+        mandatory_pf_variables = ["bus", "gen", "branch", "baseMVA", "V", "pv", "pq", "ref", "ref_gens",
+                                  "Bbus", "Bf", "Pbusinj", "Pfinj", "Cft", "shift"]
+    for var in mandatory_pf_variables:
+        if "internal" not in net["_ppc"] or var not in net["_ppc"]["internal"]:
+            logger.warning("recycle is set to True, but internal variables are missing")
+            return False
+    return True
