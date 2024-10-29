@@ -4,7 +4,7 @@
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file.
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
@@ -12,7 +12,7 @@
 """
 
 from numpy import array, inf, any, isnan, ones, r_, finfo, \
-    zeros, dot, absolute, log, flatnonzero as find
+    zeros, dot, absolute, log, flatnonzero as find, full
 from numpy.linalg import norm
 from pandapower.pypower.pipsver import pipsver
 from scipy.sparse import vstack, hstack, eye, csr_matrix as sparse
@@ -102,15 +102,15 @@ def pips(f_fcn, x0=None, A=None, l=None, u=None, xmin=None, xmax=None,
     @type x0: array
     @param A: Optional linear constraints.
     @type A: csr_matrix
-    @param l: Optional linear constraints. Default values are M{-inf}.
+    @param l: Optional linear constraints. Default values are M{-Inf}.
     @type l: array
-    @param u: Optional linear constraints. Default values are M{inf}.
+    @param u: Optional linear constraints. Default values are M{Inf}.
     @type u: array
     @param xmin: Optional lower bounds on the M{x} variables, defaults are
-                 M{-inf}.
+                 M{-Inf}.
     @type xmin: array
     @param xmax: Optional upper bounds on the M{x} variables, defaults are
-                 M{inf}.
+                 M{Inf}.
     @type xmax: array
     @param gh_fcn: Function that evaluates the optional nonlinear constraints
                    and their gradients for a given value of M{x}.
@@ -190,10 +190,10 @@ def pips(f_fcn, x0=None, A=None, l=None, u=None, xmin=None, xmax=None,
     nA = A.shape[0] if A is not None else 0 # number of original linear constr
 
     # default argument values
-    if l is None or len(l) == 0: l = -inf * ones(nA)
-    if u is None or len(u) == 0: u =  inf * ones(nA)
-    if xmin is None or len(xmin) == 0: xmin = -inf * ones(x0.shape[0])
-    if xmax is None or len(xmax) == 0: xmax =  inf * ones(x0.shape[0])
+    if l is None or len(l) == 0: l = full(nA, -inf)
+    if u is None or len(u) == 0: u =  full(nA, inf)
+    if xmin is None or len(xmin) == 0: xmin = full(x0.shape[0], -inf)
+    if xmax is None or len(xmax) == 0: xmax = full(x0.shape[0], inf)
     if gh_fcn is None:
         nonlinear = False
         gn = array([])

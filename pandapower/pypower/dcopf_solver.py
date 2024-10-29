@@ -195,7 +195,7 @@ def dcopf_solver(om, ppopt, out_opt=None):
         Varefs = bus[bus[:, BUS_TYPE] == REF, VA] * (pi / 180.0)
 
         lb, ub = xmin.copy(), xmax.copy()
-        lb[xmin == -inf] = -1e10   ## replace inf with numerical proxies
+        lb[xmin == -inf] = -1e10   ## replace Inf with numerical proxies
         ub[xmax ==  inf] =  1e10
         x0 = (lb + ub) / 2;
         # angles set to first reference angle
@@ -232,7 +232,7 @@ def dcopf_solver(om, ppopt, out_opt=None):
 #    elif alg == 700:
 #        ppopt['GRB_OPT'] = 0
 #        ppopt['GRB_METHOD'] = "automatic"
-#        ppopt['GRB_TIMELIMIT'] = inf
+#        ppopt['GRB_TIMELIMIT'] = Inf
 #        ppopt['GRB_THREADS'] = 0
 #        opt['GRB_OPT'] = gurobi_options(None, ppopt)
 #    else:

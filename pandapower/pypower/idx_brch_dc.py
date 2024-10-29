@@ -4,7 +4,7 @@
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file.
 
-# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2023 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
@@ -60,38 +60,24 @@ they are typically not present in the input matrix
 """
 
 # define the indices
-F_BUS       = 0    # f, from bus number
-T_BUS       = 1    # t, to bus number
-BR_R        = 2    # r, resistance (p.u.)
-BR_X        = 3    # x, reactance (p.u.)
-BR_B        = 4    # b, total line charging susceptance (p.u.)
-RATE_A      = 5    # rateA, MVA rating A (long term rating)
-RATE_B      = 6    # rateB, MVA rating B (short term rating)
-RATE_C      = 7    # rateC, MVA rating C (emergency rating)
-TAP         = 8    # ratio, transformer off nominal turns ratio
-SHIFT       = 9    # angle, transformer phase shift angle (degrees)
-BR_STATUS   = 10   # initial branch status, 1 - in service, 0 - out of service
-ANGMIN      = 11   # minimum angle difference, angle(Vf) - angle(Vt) (degrees)
-ANGMAX      = 12   # maximum angle difference, angle(Vf) - angle(Vt) (degrees)
+DC_F_BUS       = 0    # f, from bus number
+DC_T_BUS       = 1    # t, to bus number
+DC_BR_R        = 2    # r, resistance (p.u.)
+DC_BR_G        = 3    # b, total line charging susceptance (p.u.)  # todo Roman check if necessary
+DC_RATE_A      = 4    # rateA, MVA rating A (long term rating)
+DC_RATE_B      = 5    # rateB, MVA rating B (short term rating)
+DC_RATE_C      = 6    # rateC, MVA rating C (emergency rating)
+DC_BR_STATUS   = 7   # initial branch status, 1 - in service, 0 - out of service
 
 # included in power flow solution, not necessarily in input
-PF          = 13   # real power injected at "from" bus end (MW)
-QF          = 14   # reactive power injected at "from" bus end (MVAr)
-PT          = 15   # real power injected at "to" bus end (MW)
-QT          = 16   # reactive power injected at "to" bus end (MVAr)
+DC_PF          = 8   # real power injected at "from" bus end (MW)
+DC_IF          = 9   # current injected at "from" bus end (p.u.)
+DC_PT          = 10   # real power injected at "to" bus end (MW)
+DC_IT          = 11   # current injected at "to" bus end (p.u.)
 
-# included in opf solution, not necessarily in input
-# assume objective function has units, u
-MU_SF       = 17   # Kuhn-Tucker multiplier on MVA limit at "from" bus (u/MVA)
-MU_ST       = 18   # Kuhn-Tucker multiplier on MVA limit at "to" bus (u/MVA)
-MU_ANGMIN   = 19   # Kuhn-Tucker multiplier lower angle difference limit
-MU_ANGMAX   = 20   # Kuhn-Tucker multiplier upper angle difference limit
+DC_BR_R_ASYM = 12   # todo Roman check if necessary
+DC_BR_X_ASYM = 13   # todo Roman check if necessary
 
-BR_R_ASYM = 21
-BR_X_ASYM = 22
-BR_G      = 23    # g, total line charging conductance (p.u.)
-BR_G_ASYM = 24
-BR_B_ASYM = 25
+DC_TDPF = 14  ### TDPF not implemented for DC lines
 
-
-branch_cols = 26
+branch_dc_cols = 15

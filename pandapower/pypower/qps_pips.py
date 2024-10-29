@@ -6,7 +6,7 @@
 programming) problems.
 """
 
-from numpy import inf, ones, zeros, dot
+from numpy import inf, ones, zeros, dot, full
 
 from scipy.sparse import csr_matrix as sparse
 
@@ -32,7 +32,7 @@ def qps_pips(H, c, A, l, u, xmin=None, xmax=None, x0=None, opt=None):
 
     Example from U{http://www.uc.edu/sashtml/iml/chap8/sect12.htm}:
 
-        >>> from numpy import array, zeros, inf
+        >>> from numpy import array, zeros, Inf
         >>> from scipy.sparse import csr_matrix
         >>> H = csr_matrix(array([[1003.1,  4.3,     6.3,     5.9],
         ...                       [4.3,     2.2,     2.1,     3.9],
@@ -42,7 +42,7 @@ def qps_pips(H, c, A, l, u, xmin=None, xmax=None, x0=None, opt=None):
         >>> A = csr_matrix(array([[1,       1,       1,       1   ],
         ...                       [0.17,    0.11,    0.10,    0.18]]))
         >>> l = array([1, 0.10])
-        >>> u = array([1, inf])
+        >>> u = array([1, Inf])
         >>> xmin = zeros(4)
         >>> xmax = None
         >>> x0 = array([1, 0, 0, 1])
@@ -61,15 +61,15 @@ def qps_pips(H, c, A, l, u, xmin=None, xmax=None, x0=None, opt=None):
     @type c: array
     @param A: Optional linear constraints.
     @type A: csr_matrix
-    @param l: Optional linear constraints. Default values are M{-inf}.
+    @param l: Optional linear constraints. Default values are M{-Inf}.
     @type l: array
-    @param u: Optional linear constraints. Default values are M{inf}.
+    @param u: Optional linear constraints. Default values are M{Inf}.
     @type u: array
     @param xmin: Optional lower bounds on the M{x} variables, defaults are
-                 M{-inf}.
+                 M{-Inf}.
     @type xmin: array
     @param xmax: Optional upper bounds on the M{x} variables, defaults are
-                 M{inf}.
+                 M{Inf}.
     @type xmax: array
     @param x0: Starting value of optimization vector M{x}.
     @type x0: array
@@ -152,8 +152,8 @@ def qps_pips(H, c, A, l, u, xmin=None, xmax=None, x0=None, opt=None):
     else:
         nx = p['H'].shape[0]
 
-    p['xmin'] = -inf * ones(nx) if 'xmin' not in p else p['xmin']
-    p['xmax'] =  inf * ones(nx) if 'xmax' not in p else p['xmax']
+    p['xmin'] = full(nx, -inf) if 'xmin' not in p else p['xmin']
+    p['xmax'] = full(nx, inf) if 'xmax' not in p else p['xmax']
 
     p['c'] = zeros(nx) if p['c'] is None else p['c']
 
