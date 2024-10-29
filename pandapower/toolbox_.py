@@ -1289,25 +1289,28 @@ def set_isolated_areas_out_of_service(net, respect_switches=True):
     closed_switches = set()
     unsupplied = unsupplied_buses(net, respect_switches=respect_switches)
     logger.info("set %d of %d unsupplied buses out of service" % (
-        len(net.bus.loc[unsupplied].query('~in_service')), len(unsupplied)))
-    set_element_status(net, unsupplied, False)
+        len(net.bus.loc[list(unsupplied)].query('~in_service')), len(unsupplied)))
+    set_element_status(net, list(unsupplied), False)
 
-    # TODO: remove this loop after unsupplied_buses are fixed
     for tr3w in net.trafo3w.index.values:
         tr3w_buses = net.trafo3w.loc[tr3w, ['hv_bus', 'mv_bus', 'lv_bus']].values
         if not all(net.bus.loc[tr3w_buses, 'in_service'].values):
-            net.trafo3w.loc[tr3w, 'in_service'] = False
+            net.trafo3w.at[tr3w, 'in_service'] = False
+        open_tr3w_switches = net.switch.loc[(net.switch.et == 't3') & ~net.switch.closed & (
+            net.switch.element == tr3w)]
+        if len(open_tr3w_switches) == 3:
+            net.trafo3w.at[tr3w, 'in_service'] = False
 
-    for element in ["line", "trafo"]:
-        oos_elements = net.line[~net.line.in_service].index
-        oos_switches = net.switch[(net.switch.et == element[0]) &
-                                  (net.switch.element.isin(oos_elements))].index
+    for element, et in zip(["line", "trafo"], ["l", "t"]):
+        oos_elements = net[element].query("not in_service").index
+        oos_switches = net.switch[(net.switch.et == et) & net.switch.element.isin(
+            oos_elements)].index
 
         closed_switches.update([i for i in oos_switches.values if not net.switch.at[i, 'closed']])
         net.switch.loc[oos_switches, "closed"] = True
 
-        for idx, bus in net.switch[
-            ~net.switch.closed & (net.switch.et == element[0])][["element", "bus"]].values:
+        for idx, bus in net.switch.loc[~net.switch.closed & (net.switch.et == et)][[
+                "element", "bus"]].values:
             if not net.bus.in_service.at[next_bus(net, bus, idx, element)]:
                 net[element].at[idx, "in_service"] = False
     if len(closed_switches) > 0:
@@ -1400,7 +1403,7 @@ def select_subnet(net, buses, include_switch_buses=False, include_results=False,
     Selects a subnet by a list of bus indices and returns a net with all elements
     connected to them.
     """
-    buses = set(buses)
+    buses = list(buses)
     if include_switch_buses:
         # we add both buses of a connected line, the one selected is not switch.bus
 
@@ -1429,7 +1432,7 @@ def select_subnet(net, buses, include_switch_buses=False, include_results=False,
         if net_parameter in net.keys():
             p2[net_parameter] = net[net_parameter]
 
-    p2.bus = net.bus.loc[buses]
+    p2.bus = net.bus.loc[list(buses)]
     for elm in pp_elements(bus=False, bus_elements=True, branch_elements=False,
                            other_elements=False, res_elements=False):
         p2[elm] = net[elm][net[elm].bus.isin(buses)]
@@ -1630,7 +1633,7 @@ def replace_zero_branches_with_switches(net, elements=('line', 'impedance'), zer
             net[elm].loc[b, 'in_service'] = False
             affected_elements.add(b)
 
-        replaced[elm] = net[elm].loc[affected_elements]
+        replaced[elm] = net[elm].loc[list(affected_elements)]
 
         if drop_affected:
             if elm == 'line':
@@ -2414,15 +2417,15 @@ def get_connected_buses(net, buses, consider=("l", "s", "t", "t3", "i"), respect
                                        (net.trafo.lv_bus.isin(buses)) & ~net.trafo.index.isin(
                                            opened_trafos) &
                                        (in_service_constr)])
-        cb |= set(net.trafo.loc[connected_lvb_trafos].hv_bus.values)
-        cb |= set(net.trafo.loc[connected_hvb_trafos].lv_bus.values)
+        cb |= set(net.trafo.loc[list(connected_lvb_trafos)].hv_bus.values)
+        cb |= set(net.trafo.loc[list(connected_hvb_trafos)].lv_bus.values)
 
     # Gives the lv mv and hv buses of a 3 winding transformer
     if "t3" in consider:
         ct3 = get_connected_elements(net, "trafo3w", buses, respect_switches, respect_in_service)
-        cb |= set(net.trafo3w.loc[ct3].hv_bus.values)
-        cb |= set(net.trafo3w.loc[ct3].mv_bus.values)
-        cb |= set(net.trafo3w.loc[ct3].lv_bus.values)
+        cb |= set(net.trafo3w.loc[list(ct3)].hv_bus.values)
+        cb |= set(net.trafo3w.loc[list(ct3)].mv_bus.values)
+        cb |= set(net.trafo3w.loc[list(ct3)].lv_bus.values)
 
     if "i" in consider:
         in_service_constr = net.impedance.in_service if respect_in_service else True
@@ -2646,3 +2649,53 @@ def repl_to_line(net, idx, std_type, name=None, in_service=False, **kwargs):
     # restore the previous line parameters before changing the standard type
     net.line.loc[idx, :] = bak
     return new_idx
+
+'''
+def replace_xward_by_ward(net, index=None, drop=True):
+    """
+    Replace xward elements by ward elements in the given grid model.
+    The series impedance component of xward is ignored and lost after the replacement.
+
+    This function replaces xward elements in a pandapower net with equivalent ward elements (sans series impedance).
+    The original xward elements can be dropped (default) or set out of service.
+
+    Parameters:
+    -----------
+    net : pandapowerNet
+        The pandapower grid containing the xward elements to be replaced.
+
+    index : int, list of int, or None, optional (default: None)
+        The index or list of indices of the xward elements to replace.
+        If None, all xward elements in the grid will be replaced.
+
+    drop : bool, optional (default: True)
+        If True, the original xward elements will be removed from the grid.
+        If False, the xward elements will be set out of service instead of being removed.
+
+    Returns:
+    --------
+    new_index : list of int
+        A list of indices of the newly created ward elements in the network.
+
+    Notes:
+    ------
+    The function ensures that the group membership and associated element type of the replaced
+    elements are updated accordingly.
+    """
+    index = list(ensure_iterability(index)) if index is not None else list(net.impedance.index)
+
+    new_index = []
+    for xi in index:
+        wi = create_ward(net, net.xward.at[xi, "bus"], net.xward.at[xi, "ps_mw"], net.xward.at[xi, "qs_mvar"],
+                         net.xward.at[xi, "pz_mw"], net.xward.at[xi, "qz_mvar"], f"REPLACEMENT_xward_{xi}",
+                         net.xward.at[xi, "in_service"])
+        new_index.append(wi)
+
+    _replace_group_member_element_type(net, index, "xward", new_index, "ward",
+                                       detach_from_gr=False)
+    if drop:
+        drop_elements_simple(net, "xward", index)
+    else:
+        net.xward.loc[index, "in_service"] = False
+    return new_index
+'''

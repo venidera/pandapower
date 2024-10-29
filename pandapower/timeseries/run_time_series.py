@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2023 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 import tempfile
+from collections.abc import Iterable
+import tqdm
 
 import pandapower as pp
-from pandapower import LoadflowNotConverged, OPFNotConverged
-from pandapower.control.run_control import ControllerNotConverged, get_controller_order, \
-    check_for_initial_run, run_control
+from pandapower.auxiliary import ControllerNotConverged
+from pandapower.control import prepare_run_ctrl, run_control
 from pandapower.control.util.diagnostic import control_diagnostic
 from pandapower.timeseries.output_writer import OutputWriter
-from collections.abc import Iterable
 
 try:
-    import pplog
+    import pandaplan.core.pplog as pplog
 except ImportError:
     import logging as pplog
 
@@ -48,22 +48,23 @@ def init_output_writer(net, time_steps):
     # init output writer before time series calculation
     output_writer = net.output_writer.iat[0, 0]
     output_writer.time_steps = time_steps
-    output_writer.init_all()
+    output_writer.init_all(net)
 
 
-def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=100, fill='█'):
-    """
-    Call in a loop to create terminal progress bar.
-    the code is mentioned in : https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
-    """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filled_length = int(length * iteration // total)
-    bar = fill * filled_length + '-' * (length - filled_length)
-    # logger.info('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end="")
-    # Print New Line on Complete
-    if iteration == total:
-        print("\n")
+#
+# def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=100, fill='█'):
+#     """
+#     Call in a loop to create terminal progress bar.
+#     the code is mentioned in : https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+#     """
+#     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+#     filled_length = int(length * iteration // total)
+#     bar = fill * filled_length + '-' * (length - filled_length)
+#     # logger.info('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
+#     print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end="")
+#     # Print New Line on Complete
+#     if iteration == total:
+#         print("\n")
 
 
 def controller_not_converged(time_step, ts_variables):
@@ -80,18 +81,31 @@ def pf_not_converged(time_step, ts_variables):
 
 def control_time_step(controller_order, time_step):
     for levelorder in controller_order:
-        for ctrl in levelorder:
-            ctrl.time_step(time_step)
+        for ctrl, net in levelorder:
+            ctrl.time_step(net, time_step)
+
+
+def finalize_step(controller_order, time_step):
+    for levelorder in controller_order:
+        for ctrl, net in levelorder:
+            ctrl.finalize_step(net, time_step)
+
 
 def output_writer_routine(net, time_step, pf_converged, ctrl_converged, recycle_options):
     output_writer = net["output_writer"].iat[0, 0]
     # update time step for output writer
     output_writer.time_step = time_step
     # save
-    output_writer.save_results(time_step, pf_converged=pf_converged, ctrl_converged=ctrl_converged,
+    output_writer.save_results(net, time_step, pf_converged=pf_converged, ctrl_converged=ctrl_converged,
                                recycle_options=recycle_options)
 
-def run_time_step(net, time_step, ts_variables, **kwargs):
+
+def _call_output_writer(net, time_step, pf_converged, ctrl_converged, ts_variables):
+    output_writer_routine(net, time_step, pf_converged, ctrl_converged, ts_variables['recycle_options'])
+
+
+def run_time_step(net, time_step, ts_variables, run_control_fct=run_control, output_writer_fct=_call_output_writer,
+                  **kwargs):
     """
     Time Series step function
     Is called to run the PANDAPOWER AC power flows with the timeseries module
@@ -111,7 +125,7 @@ def run_time_step(net, time_step, ts_variables, **kwargs):
 
     try:
         # calls controller init, control steps and run function (runpp usually is called in here)
-        run_control(net, run_control=False, ctrl_variables=ts_variables, **kwargs)
+        run_control_fct(net, ctrl_variables=ts_variables, **kwargs)
     except ControllerNotConverged:
         ctrl_converged = False
         # If controller did not converge do some stuff
@@ -121,7 +135,9 @@ def run_time_step(net, time_step, ts_variables, **kwargs):
         pf_converged = False
         pf_not_converged(time_step, ts_variables)
 
-    output_writer_routine(net, time_step, pf_converged, ctrl_converged, ts_variables['recycle_options'])
+    output_writer_fct(net, time_step, pf_converged, ctrl_converged, ts_variables)
+
+    finalize_step(ts_variables['controller_order'], time_step)
 
 
 def _check_controller_recyclability(net):
@@ -134,7 +150,7 @@ def _check_controller_recyclability(net):
 
     for idx in net.controller.index:
         # todo: write to controller data frame recycle column instead of using self.recycle of controller instance
-        ctrl_recycle = net.controller.at[idx, "object"].recycle
+        ctrl_recycle = net.controller.at[idx, "recycle"]
         if not isinstance(ctrl_recycle, dict):
             # if one controller has a wrong recycle configuration it is deactived
             recycle = False
@@ -146,7 +162,7 @@ def _check_controller_recyclability(net):
     return recycle
 
 
-def _check_output_writer_recyclability(net, recycle):
+def _check_output_writer_recyclability(net, recycle, run):
     if "output_writer" not in net:
         raise ValueError("OutputWriter not defined")
     ow = net.output_writer.at[0, "object"]
@@ -154,6 +170,11 @@ def _check_output_writer_recyclability(net, recycle):
     recycle["batch_read"] = list()
     recycle["only_v_results"] = False
     new_log_variables = list()
+
+    if hasattr(run, "__name__") and run.__name__ == "rundcpp":
+        recycle["only_v_results"] = False
+        recycle["batch_read"] = False
+        return recycle
 
     for output in ow.log_variables:
         table, variable = output[0], output[1]
@@ -195,7 +216,7 @@ def get_recycle_settings(net, **kwargs):
         recycle = _check_controller_recyclability(net)
         # if still recycle is not None, also check for fast output_writer features
         if recycle is not False:
-            recycle = _check_output_writer_recyclability(net, recycle)
+            recycle = _check_output_writer_recyclability(net, recycle, kwargs.get("run", kwargs.get("run_control_fct")))
 
     return recycle
 
@@ -212,7 +233,12 @@ def init_time_steps(net, time_steps, **kwargs):
         else:
             logger.warning("No time steps to calculate are specified. "
                            "I'll check the datasource of the first controller for avaiable time steps")
-            max_timestep = net.controller.object.at[0].data_source.get_time_steps_len()
+            ds = net.controller.object.at[0].data_source
+            if ds is None:
+                raise UserWarning("No time steps are specified and the first controller doesn't have a data source"
+                                  "the time steps could be retrieved from")
+            else:
+                max_timestep = ds.get_time_steps_len()
             time_steps = range(max_timestep)
     return time_steps
 
@@ -238,24 +264,17 @@ def init_time_series(net, time_steps, continue_on_divergence=False, verbose=True
 
     time_steps = init_time_steps(net, time_steps, **kwargs)
 
-    ts_variables = dict()
-
     init_default_outputwriter(net, time_steps, **kwargs)
-    level, order = get_controller_order(net)
     # get run function
     run = kwargs.pop("run", pp.runpp)
     recycle_options = None
-    if hasattr(run, "__name__") and run.__name__ == "runpp":
+    if hasattr(run, "__name__") and (run.__name__ == "runpp" or run.__name__ == "rundcpp"):
         # use faster runpp options if possible
-        recycle_options = get_recycle_settings(net, **kwargs)
+        recycle_options = get_recycle_settings(net, run=run, **kwargs)
 
     init_output_writer(net, time_steps)
-    # True at default. Initial power flow is calculated before each control step (some controllers need inits)
-    ts_variables["initial_run"] = check_for_initial_run(order)
-    # order of controller (controllers are called in a for loop.)
-    ts_variables["controller_order"] = order
-    # run function to be called in run_control - default is pp.runpp, but can be runopf or whatever you like
-    ts_variables["run"] = run
+    # as base take everything considered when preparing run_control
+    ts_variables = prepare_run_ctrl(net, None, run=run, **kwargs)
     # recycle options, which define what can be recycled
     ts_variables["recycle_options"] = recycle_options
     # time steps to be calculated (list or range)
@@ -264,27 +283,24 @@ def init_time_series(net, time_steps, continue_on_divergence=False, verbose=True
     ts_variables["continue_on_divergence"] = continue_on_divergence
     # print settings
     ts_variables["verbose"] = verbose
-    # errors to be considered as exception
-    ts_variables["errors"] = (LoadflowNotConverged, OPFNotConverged)
 
     if logger.level != 10 and verbose:
         # simple progress bar
-        print_progress_bar(0, len(time_steps), prefix='Progress:', suffix='Complete', length=50)
+        ts_variables['progress_bar'] = tqdm.tqdm(total=len(time_steps))
 
     return ts_variables
 
 
-def cleanup(ts_variables):
+def cleanup(net, ts_variables):
     if isinstance(ts_variables["recycle_options"], dict):
         # Todo: delete internal variables and dumped results which are not needed
-        pass
+        net._ppc = None  # remove _ppc because if recycle == True and a new timeseries calculation is started with a different setup (in_service of lines or trafos, open switches etc.) it can lead to a disaster
 
 
 def print_progress(i, time_step, time_steps, verbose, **kwargs):
     # simple status print in each time step.
     if logger.level != 10 and verbose:
-        len_timesteps = len(time_steps)
-        print_progress_bar(i + 1, len_timesteps, prefix='Progress:', suffix='Complete', length=50)
+        kwargs['ts_variables']["progress_bar"].update(1)
 
     # print debug info
     if logger.level == pplog.DEBUG and verbose:
@@ -295,7 +311,8 @@ def print_progress(i, time_step, time_steps, verbose, **kwargs):
         func = kwargs["progress_function"]
         func(i, time_step, time_steps, **kwargs)
 
-def run_loop(net, ts_variables, **kwargs):
+
+def run_loop(net, ts_variables, run_control_fct=run_control, output_writer_fct=_call_output_writer, **kwargs):
     """
     runs the time series loop which calls pp.runpp (or another run function) in each iteration
 
@@ -306,11 +323,12 @@ def run_loop(net, ts_variables, **kwargs):
 
     """
     for i, time_step in enumerate(ts_variables["time_steps"]):
-        print_progress(i, time_step, ts_variables["time_steps"], ts_variables["verbose"], **kwargs)
-        run_time_step(net, time_step, ts_variables, **kwargs)
+        print_progress(i, time_step, ts_variables["time_steps"], ts_variables["verbose"], ts_variables=ts_variables,
+                       **kwargs)
+        run_time_step(net, time_step, ts_variables, run_control_fct, output_writer_fct, **kwargs)
 
 
-def run_timeseries(net, time_steps=None, continue_on_divergence=False, verbose=True, **kwargs):
+def run_timeseries(net, time_steps=None, continue_on_divergence=False, verbose=True, check_controllers=True, **kwargs):
     """
     Time Series main function
 
@@ -334,8 +352,13 @@ def run_timeseries(net, time_steps=None, continue_on_divergence=False, verbose=T
 
     ts_variables = init_time_series(net, time_steps, continue_on_divergence, verbose, **kwargs)
 
-    control_diagnostic(net)
+    # cleanup ppc before first time step
+    cleanup(net, ts_variables)
+
+    if check_controllers:
+        control_diagnostic(net) # produces significant overhead if you run many timeseries of short duration
     run_loop(net, ts_variables, **kwargs)
 
     # cleanup functions after the last time step was calculated
-    cleanup(ts_variables)
+    cleanup(net, ts_variables)
+    # both cleanups, at the start AND at the end, are important!

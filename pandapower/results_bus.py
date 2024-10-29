@@ -1,36 +1,57 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
 import numpy as np
-from numpy import complex128
 import pandas as pd
+from numpy import complex128
 from pandapower.auxiliary import _sum_by_group, sequence_to_phase, _sum_by_group_nvals
-from pandapower.pypower.idx_bus import VM, VA, PD, QD, LAM_P, LAM_Q, BASE_KV,NONE
+from pandapower.pypower.idx_bus import VM, VA, PD, QD, LAM_P, LAM_Q, BASE_KV, NONE, BS, BUS_TYPE, BUS_I
+from pandapower.pypower.idx_bus_dc import DC_VM, DC_BUS_TYPE, DC_NONE, DC_PD, DC_BUS_I
 
 from pandapower.pypower.idx_gen import PG, QG
+from pandapower.build_bus import _get_motor_pq, _get_symmetric_pq_of_unsymetric_element
+from pandapower.pypower.idx_ssc import SSC_X_CONTROL_VM, SSC_X_CONTROL_VA, SSC_Q, SSC_INTERNAL_BUS
+from pandapower.pypower.idx_svc import SVC_THYRISTOR_FIRING_ANGLE, SVC_Q, SVC_X_PU
+from pandapower.pypower.idx_vsc import VSC_Q, VSC_P, VSC_P_DC, VSC_BUS_DC, VSC_INTERNAL_BUS_DC, VSC_INTERNAL_BUS
+
+try:
+    import pandaplan.core.pplog as logging
+except ImportError:
+    import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _set_buses_out_of_service(ppc):
-
-    disco = np.where(ppc["bus"][:, 1] == NONE)[0]
+    disco = np.where(ppc["bus"][:, BUS_TYPE] == NONE)[BUS_I]
     ppc["bus"][disco, VM] = np.nan
     ppc["bus"][disco, VA] = np.nan
     ppc["bus"][disco, PD] = 0
     ppc["bus"][disco, QD] = 0
 
 
+def _set_dc_buses_out_of_service(ppc):
+    disco = np.where(ppc["bus_dc"][:, DC_BUS_TYPE] == DC_NONE)[DC_BUS_I]
+    ppc["bus_dc"][disco, DC_VM] = np.nan
+    ppc["bus_dc"][disco, DC_PD] = 0
+
+
 def _get_bus_v_results(net, ppc, suffix=None):
-    ac = net["_options"]["ac"]
     bus_idx = _get_bus_idx(net)
 
     res_table = "res_bus" if suffix is None else "res_bus%s" % suffix
-    if ac:
-        net[res_table]["vm_pu"] = ppc["bus"][bus_idx][:, VM]
+    # always read the vm_pu from ppc, even for DC power flow - otherwise old values can persist
+    net[res_table]["vm_pu"] = ppc["bus"][bus_idx][:, VM]
     # voltage angles
     net[res_table]["va_degree"] = ppc["bus"][bus_idx][:, VA]
+
+
+def _get_bus_dc_v_results(net, ppc):
+    bus_idx = _get_bus_idx(net, "bus_dc")
+    net["res_bus_dc"]["vm_pu"] = ppc["bus_dc"][bus_idx][:, DC_VM]
 
 
 def _get_bus_v_results_3ph(net, ppc0, ppc1, ppc2):
@@ -63,9 +84,9 @@ def _V012_from_ppc012(net, ppc0, ppc1, ppc2):
     return V012_pu
 
 
-def _get_bus_idx(net):
-    bus_lookup = net["_pd2ppc_lookups"]["bus"]
-    ppi = net["bus"].index.values
+def _get_bus_idx(net, bus_table="bus"):
+    bus_lookup = net["_pd2ppc_lookups"][bus_table]
+    ppi = net[bus_table].index.values
     bus_idx = bus_lookup[ppi]
     return bus_idx
 
@@ -89,8 +110,17 @@ def _get_bus_results(net, ppc, bus_pq):
     if mode == "opf":
         _get_opf_marginal_prices(net, ppc)
 
-    # update index in res bus bus
+    # update index in res_bus
     net["res_bus"].index = net["bus"].index
+
+
+def _get_bus_dc_results(net, bus_p_dc):
+
+    # write sum of p and q values to bus
+    net["res_bus_dc"]["p_mw"].values[:] = bus_p_dc[:, 0]
+
+    # update index in res_bus_dc
+    net["res_bus_dc"].index = net["bus_dc"].index
 
 
 def _get_bus_results_3ph(net, bus_pq):
@@ -110,6 +140,7 @@ def _get_bus_results_3ph(net, bus_pq):
     # update index in res bus bus
     # net["res_bus"].index = net["bus"].index
     net["res_bus_3ph"].index = net["bus"].index
+
 
 def write_voltage_dependend_load_results(net, p, q, b):
     l = net["load"]
@@ -162,7 +193,6 @@ def write_pq_results_to_element(net, ppc, element, suffix=None):
     :param element: element name (str)
     :return:
     """
-
     # info from net
     _is_elements = net["_is_elements"]
     ac = net["_options"]["ac"]
@@ -171,7 +201,7 @@ def write_pq_results_to_element(net, ppc, element, suffix=None):
     el_data = net[element]
     res_ = "res_%s" % element
     if suffix is not None:
-        res_ += "_%s"%suffix
+        res_ += "_%s" % suffix
     ctrl_ = "%s_controllable" % element
 
     is_controllable = False
@@ -181,6 +211,17 @@ def write_pq_results_to_element(net, ppc, element, suffix=None):
         gen_sign = 1 if element == "sgen" else -1
         is_controllable = True
 
+    if element == "motor":
+        p_mw, q_mvar = _get_motor_pq(net)
+        net[res_]["p_mw"].values[:] = p_mw
+        net[res_]["q_mvar"].values[:] = q_mvar
+        return net
+    elif element.startswith("asymmetric"):
+        p_mw, q_mvar = _get_symmetric_pq_of_unsymetric_element(net, element)
+        net[res_]["p_mw"].values[:] = p_mw
+        net[res_]["q_mvar"].values[:] = q_mvar
+        return net
+
     # Wards and xwards have different names in their element table, but not in res table. Also no scaling -> Fix...
     p_mw = "ps_mw" if element in ["ward", "xward"] else "p_mw"
     q_mvar = "qs_mvar" if element in ["ward", "xward"] else "q_mvar"
@@ -188,17 +229,91 @@ def write_pq_results_to_element(net, ppc, element, suffix=None):
 
     element_in_service = _is_elements[element]
 
-    # P result in kw to element
+    # P result in mw to element
     net[res_]["p_mw"].values[:] = el_data[p_mw].values * scaling * element_in_service
     if is_controllable:
-        net[res_]["p_mw"].loc[controlled_elements] = ppc["gen"][gen_idx, PG] * gen_sign
+        net[res_].loc[controlled_elements, "p_mw"] = ppc["gen"][gen_idx, PG] * gen_sign
+
+    # add results from distributed slack calculation for xwards from ppc instead of the element table
+    if net._options['distributed_slack'] and element == "xward" and np.any(net.xward.loc[element_in_service, 'slack_weight'].values != 0):
+        _extract_dist_slack_pq_results(net, ppc, element, res_)
 
     if ac:
-        # Q result in kvar to element
+        # Q result in mvar to element
         net[res_]["q_mvar"].values[:] = el_data[q_mvar].values * scaling * element_in_service
         if is_controllable:
-            net[res_]["q_mvar"].loc[controlled_elements] = ppc["gen"][gen_idx, QG] * gen_sign
+            net[res_].loc[controlled_elements, "q_mvar"] = ppc["gen"][gen_idx, QG] * gen_sign
     return net
+
+
+def write_p_dc_results_to_element(net, ppc, element):
+    """
+    get p_mw for a specific DC pq element ("vsc").
+    This function basically writes values element table to res_element table
+    :param net: pandapower net
+    :param element: element name (str)
+    :return:
+    """
+    # info from net
+    _is_elements = net["_is_elements"]
+    ac = net["_options"]["ac"]
+
+    # info element
+    element_data = net[element]
+    res_ = "res_%s" % element
+
+    # todo: how does "not controllable" element behave?
+    ctrl_ = "%s_controllable" % element
+
+    is_controllable = False
+    if ctrl_ in _is_elements:
+        raise UserWarning("wrong idea about controllable")
+        controlled_elements = net[element][net._is_elements[ctrl_]].index
+        gen_idx = net._pd2ppc_lookups[ctrl_][controlled_elements]
+        gen_sign = 1 if element == "sgen" else -1
+        is_controllable = True
+
+    if element != "vsc":
+        raise NotImplementedError("Only VSC DC element is implemented for bus_dc P results")
+
+    p_mw = "control_value_dc"  # in "vsc" element
+    vsc_p_mode = _is_elements[element] & (net.vsc.control_mode_dc == "p_mw")
+
+    # P result in mw to element
+    # net[res_]["p_dc_mw"].values[:] = element_data[p_mw].values * vsc_p_mode
+
+    # use the ppc value for the result instead:
+    #res_p = np.nans(shape=(len(net[element])), dtype=np.float64)
+    #res_p[net._is_elements["vsc"]] = ppc[element][:, VSC_P_DC]
+    net[res_]["p_dc_mw"].values[:] = ppc[element][:, VSC_P_DC]
+    return net
+
+
+def _extract_dist_slack_pq_results(net, ppc, element, res_):
+    node_elements = ['sgen', 'load', 'ward', 'xward', 'storage']
+    for b in net[element].bus.values:
+        connected = dict()
+        for e in node_elements:
+            conn = net[e].loc[net[e].in_service & (net[e].bus == b)].index.values
+            if len(conn) > 0:
+                connected.update({e: conn})
+
+        p_bus = ppc['bus'][net._pd2ppc_lookups["bus"][b], PD]
+        # first, count the total slack weights per bus, and obtain the variable part of the active power
+        total_weight = 0
+        for e, idx in connected.items():
+            if 'slack_weight' in net[e].columns:
+                elm_weight = net[e].loc[idx, 'slack_weight'].values
+                if np.abs(elm_weight).sum() != 0:
+                    total_weight += np.abs(elm_weight)
+            p_bus -= net[e].loc[idx, 'ps_mw' if e in ["ward", "xward"] else "p_mw"].values.sum()
+
+        # now, distribute the variable part of the active power among the dist_slack elements
+        for e, idx in connected.items():
+            if 'slack_weight' in net[e].columns:
+                elm_weight = net[e].loc[idx, 'slack_weight'].values
+                if np.abs(elm_weight).sum() != 0:
+                    net[res_]["p_mw"] += p_bus * elm_weight / total_weight
 
 
 def write_pq_results_to_element_3ph(net, element):
@@ -223,30 +338,30 @@ def write_pq_results_to_element_3ph(net, element):
 
     element_in_service = _is_elements[element]
 
-    net[res_]["p_a_mw"] = pd.Series((el_data["p_mw"].values/3)\
-    * scaling * element_in_service) if element in[ "load","sgen"] else\
-    pd.Series(el_data["p_a_mw"].values * scaling * element_in_service)
+    net[res_]["p_a_mw"] = list(
+        (el_data["p_mw"].values / 3) * scaling * element_in_service) if element in ["load", "sgen"] \
+        else list(el_data["p_a_mw"].values * scaling * element_in_service)
 
-    net[res_]["p_b_mw"] = pd.Series((el_data["p_mw"].values/3) \
-    * scaling * element_in_service)if element in[ "load","sgen"]  else\
-    pd.Series(el_data["p_b_mw"].values * scaling * element_in_service)
+    net[res_]["p_b_mw"] = list(
+        (el_data["p_mw"].values / 3) * scaling * element_in_service)if element in ["load", "sgen"] \
+        else list(el_data["p_b_mw"].values * scaling * element_in_service)
 
-    net[res_]["p_c_mw"] = pd.Series((el_data["p_mw"].values/3) \
-       * scaling * element_in_service) if element in[ "load","sgen"]  else\
-       pd.Series(el_data["p_c_mw"].values * scaling * element_in_service)
+    net[res_]["p_c_mw"] = list(
+        (el_data["p_mw"].values / 3) * scaling * element_in_service) if element in ["load", "sgen"] \
+        else list(el_data["p_c_mw"].values * scaling * element_in_service)
     if ac:
         # Q result in kvar to element
-        net[res_]["q_a_mvar"] = pd.Series((el_data["q_mvar"].values/3)\
-    * scaling * element_in_service) if element in[ "load","sgen"]  else\
-    pd.Series(el_data["q_a_mvar"].values * scaling * element_in_service)
+        net[res_]["q_a_mvar"] = list(
+            (el_data["q_mvar"].values / 3) * scaling * element_in_service) if element in ["load", "sgen"] \
+            else list(el_data["q_a_mvar"].values * scaling * element_in_service)
 
-        net[res_]["q_b_mvar"] = pd.Series((el_data["q_mvar"].values/3)\
-    * scaling * element_in_service) if element in[ "load","sgen"]  else\
-    pd.Series(el_data["q_b_mvar"].values * scaling * element_in_service)
+        net[res_]["q_b_mvar"] = list(
+            (el_data["q_mvar"].values / 3) * scaling * element_in_service) if element in ["load", "sgen"] \
+            else list(el_data["q_b_mvar"].values * scaling * element_in_service)
 
-        net[res_]["q_c_mvar"] = pd.Series((el_data["q_mvar"].values/3)\
-    * scaling * element_in_service) if element in[ "load","sgen"]  else\
-    pd.Series(el_data["q_c_mvar"].values * scaling * element_in_service)
+        net[res_]["q_c_mvar"] = list(
+            (el_data["q_mvar"].values / 3) * scaling * element_in_service) if element in ["load", "sgen"] \
+            else list(el_data["q_c_mvar"].values * scaling * element_in_service)
 
     # update index of result table
     net[res_].index = net[element].index
@@ -257,13 +372,14 @@ def get_p_q_b(net, element, suffix=None):
     ac = net["_options"]["ac"]
     res_ = "res_" + element
     if suffix != None:
-        res_ += "_%s"%suffix
+        res_ += "_%s" % suffix
 
     # bus values are needed for stacking
     b = net[element]["bus"].values
     p = net[res_]["p_mw"]
     q = net[res_]["q_mvar"] if ac else np.zeros_like(p)
     return p, q, b
+
 
 def get_p_q_b_3ph(net, element):
     ac = net["_options"]["ac"]
@@ -281,23 +397,24 @@ def get_p_q_b_3ph(net, element):
 
 
 def _get_p_q_results(net, ppc, bus_lookup_aranged):
-    bus_pq = np.zeros(shape=(len(net["bus"].index), 2), dtype=float)
+    bus_pq = np.zeros(shape=(len(net["bus"].index), 2), dtype=np.float64)
     b, p, q = np.array([]), np.array([]), np.array([])
 
     ac = net["_options"]["ac"]
+    elements = ["load", "motor", "sgen", "storage", "ward", "xward",
+                "asymmetric_load", "asymmetric_sgen"]
+
     if net["_options"]["voltage_depend_loads"] and ac:
         # voltage dependend loads need special treatment here
 
         p, q, b = write_voltage_dependend_load_results(net, p, q, b)
-        elements = ["sgen", "storage", "ward", "xward"]
-    else:
-        elements = ["load", "sgen", "storage", "ward", "xward"]
+        elements.remove("load")
 
     for element in elements:
-        if len(net[element]):
+        if len(net[element]) > 0:
             write_pq_results_to_element(net, ppc, element)
             p_el, q_el, bus_el = get_p_q_b(net, element)
-            if element == "sgen":
+            if element.endswith("sgen"):
                 p = np.hstack([p, -p_el])
                 q = np.hstack([q, -q_el])
             else:
@@ -309,24 +426,53 @@ def _get_p_q_results(net, ppc, bus_lookup_aranged):
         q = np.zeros(len(p))
 
     # sum pq results from every element to be written to net['bus'] later on
-    b_pp, vp, vq = _sum_by_group(b.astype(int), p, q)
+    b_pp, vp, vq = _sum_by_group(b.astype(np.int64), p, q)
     b_ppc = bus_lookup_aranged[b_pp]
     bus_pq[b_ppc, 0] = vp
     bus_pq[b_ppc, 1] = vq
     return bus_pq
 
+
+def _get_p_dc_results(net, ppc, bus_lookup_aranged):
+    bus_p_dc = np.zeros(shape=(len(net["bus_dc"].index), 1), dtype=np.float64)  # 1 because only p relevant
+    b, p = np.array([]), np.array([])
+
+    # ac = net["_options"]["ac"]
+    # elements = ["load", "motor", "sgen", "storage", "ward", "xward",
+    #             "asymmetric_load", "asymmetric_sgen"]
+    elements = ["vsc"]  # we only have VSC element so far that injects or consumes P from DC bus
+
+    for element in elements:
+        if len(net[element]) > 0:
+            write_p_dc_results_to_element(net, ppc, element)
+            bus_el = net[element]["bus_dc"].values
+            p_el = net[f"res_{element}"]["p_dc_mw"]
+            # if element.endswith("sgen"):
+            #     p = np.hstack([p, -p_el])
+            # else:
+            #     p = np.hstack([p, p_el])
+            p = np.hstack([p, p_el])
+            b = np.hstack([b, bus_el])
+
+    # sum pq results from every element to be written to net['bus'] later on
+    b_pp, vp, _ = _sum_by_group(b.astype(np.int64), p, p)
+    b_ppc = bus_lookup_aranged[b_pp]
+    bus_p_dc[b_ppc, 0] = vp
+    return bus_p_dc
+
+
 def _get_p_q_results_3ph(net, bus_lookup_aranged):
     # results to be filled (bus, p in kw, q in kvar)
     bus_pq = np.zeros(shape=(len(net["bus"].index), 6), dtype=float)
     b, pA, pB, pC, qA, qB, qC = np.array([]), np.array([]), np.array([]), np.array([]), \
-                                np.array([]), np.array([]), np.array([])
+        np.array([]), np.array([]), np.array([])
 
     ac = net["_options"]["ac"]
     # Todo: Voltage dependent loads
     elements = ["storage", "sgen", "load"]
     elements_3ph = ["asymmetric_load", "asymmetric_sgen"]
     for element in elements:
-        sign = -1 if element in ['sgen','asymmetric_sgen'] else 1
+        sign = -1 if element in ['sgen', 'asymmetric_sgen'] else 1
         if len(net[element]):
             write_pq_results_to_element(net, net._ppc1, element, suffix="3ph")
             p_el, q_el, bus_el = get_p_q_b(net, element, suffix="3ph")
@@ -338,7 +484,7 @@ def _get_p_q_results_3ph(net, bus_lookup_aranged):
             qC = np.hstack([qC, sign * q_el/3 if ac else np.zeros(len(p_el/3))])
             b = np.hstack([b, bus_el])
     for element in elements_3ph:
-        sign = -1 if element in ['sgen','asymmetric_sgen'] else 1
+        sign = -1 if element in ['sgen', 'asymmetric_sgen'] else 1
         if len(net[element]):
             write_pq_results_to_element_3ph(net, element)
             p_el_A, q_el_A, p_el_B, q_el_B, p_el_C, q_el_C, bus_el = get_p_q_b_3ph(net, element)
@@ -351,7 +497,7 @@ def _get_p_q_results_3ph(net, bus_lookup_aranged):
             b = np.hstack([b, bus_el])
 
     # sum pq results from every element to be written to net['bus'] later on
-    b_pp, vp_A, vq_A, vp_B, vq_B, vp_C, vq_C = _sum_by_group_nvals(b.astype(int), pA, qA, pB, qB, pC, qC)
+    b_pp, vp_A, vq_A, vp_B, vq_B, vp_C, vq_C = _sum_by_group_nvals(b.astype(np.int64), pA, qA, pB, qB, pC, qC)
     b_ppc = bus_lookup_aranged[b_pp]
     bus_pq[b_ppc, 0] = vp_A
     bus_pq[b_ppc, 1] = vq_A
@@ -361,12 +507,15 @@ def _get_p_q_results_3ph(net, bus_lookup_aranged):
     bus_pq[b_ppc, 5] = vq_C
     return bus_pq
 
+
 def _get_shunt_results(net, ppc, bus_lookup_aranged, bus_pq):
     ac = net["_options"]["ac"]
 
     b, p, q = np.array([]), np.array([]), np.array([])
     _is_elements = net["_is_elements"]
     bus_lookup = net["_pd2ppc_lookups"]["bus"]
+    baseMVA = ppc["baseMVA"]
+    baseZ = np.square(ppc["bus"][:, BASE_KV]) / baseMVA
 
     s = net["shunt"]
     if len(s) > 0:
@@ -418,9 +567,67 @@ def _get_shunt_results(net, ppc, bus_lookup_aranged, bus_pq):
             q = np.hstack([q, q_xward])
         b = np.hstack([b, xw["bus"].values])
 
+    # svc = net["svc"]  # todo: uncomment this after PandaModels net also has this key
+    svc = net.get("svc", np.array([]))
+    if len(svc):
+        svcidx = bus_lookup[svc["bus"].values]
+        svc_is = _is_elements["svc"]
+        net["res_svc"].loc[svc_is, "thyristor_firing_angle_degree"] = np.rad2deg(ppc["svc"][svc_is, SVC_THYRISTOR_FIRING_ANGLE])
+        p = np.hstack([p, np.zeros_like(svc["bus"].values)])
+        if ac:
+            net["res_svc"].loc[svc_is, "vm_pu"] = ppc["bus"][svcidx[svc_is], VM]
+            net["res_svc"].loc[svc_is, "va_degree"] = ppc["bus"][svcidx[svc_is], VA]
+            q_svc = ppc["svc"][:, SVC_Q]
+            net["res_svc"].loc[:, "q_mvar"] = q_svc  # write all because of zeros
+            net["res_svc"].loc[svc_is, "x_ohm"] = ppc["svc"][svc_is, SVC_X_PU] * baseZ[svcidx[svc_is]]
+            q = np.hstack([q, q_svc])
+        b = np.hstack([b, svc["bus"].values])
+
+    # ssc = net["ssc"]  # todo: uncomment this after PandaModels net also has this key
+    ssc = net.get("ssc", np.array([]))
+    if len(ssc):
+        sscidx = bus_lookup[ssc["bus"].values]
+        ssc_is = _is_elements["ssc"]
+        ssc_tb = ppc["ssc"][ssc_is, SSC_INTERNAL_BUS].real.astype(np.int64)
+
+        net["res_ssc"].loc[ssc_is, "vm_internal_pu"] = ppc["bus"][ssc_tb, VM]
+        net["res_ssc"].loc[ssc_is, "va_internal_degree"] = ppc["bus"][ssc_tb, VA]
+        p = np.hstack([p, np.zeros_like(ssc["bus"].values)])
+        if ac:
+            net["res_ssc"].loc[ssc_is, "vm_pu"] = ppc["bus"][sscidx[ssc_is], VM]
+            net["res_ssc"].loc[ssc_is, "va_degree"] = ppc["bus"][sscidx[ssc_is], VA]
+            q_ssc = ppc["ssc"][:, SSC_Q]
+            net["res_ssc"].loc[:, "q_mvar"] = q_ssc  # write all because of zeros
+            q = np.hstack([q, q_ssc])
+        b = np.hstack([b, ssc["bus"].values])
+
+    # vsc = net["vsc"]  # todo: uncomment this after PandaModels net also has this key
+    vsc = net.get("vsc", np.array([]))
+    if len(vsc):
+        vscidx = bus_lookup[vsc["bus"].values]
+        vsc_is = _is_elements["vsc"]
+        vsc_tb = ppc["vsc"][vsc_is, VSC_INTERNAL_BUS].real.astype(np.int64)
+        vsc_dc_fb = ppc["vsc"][vsc_is, VSC_BUS_DC].real.astype(np.int64)
+        vsc_dc_tb = ppc["vsc"][vsc_is, VSC_INTERNAL_BUS_DC].real.astype(np.int64)
+
+        net["res_vsc"].loc[vsc_is, "vm_internal_pu"] = ppc["bus"][vsc_tb, VM]
+        net["res_vsc"].loc[vsc_is, "vm_internal_dc_pu"] = ppc["bus_dc"][vsc_dc_tb, DC_VM]
+        net["res_vsc"].loc[vsc_is, "vm_dc_pu"] = ppc["bus_dc"][vsc_dc_fb, DC_VM]
+        p_vsc = ppc["vsc"][:, VSC_P]
+        net["res_vsc"].loc[:, "p_mw"] = p_vsc  # write all because of zeros
+        p = np.hstack([p, p_vsc])
+        if ac:
+            net["res_vsc"].loc[vsc_is, "va_internal_degree"] = ppc["bus"][vsc_tb, VA]
+            net["res_vsc"].loc[vsc_is, "vm_pu"] = ppc["bus"][vscidx[vsc_is], VM]
+            net["res_vsc"].loc[vsc_is, "va_degree"] = ppc["bus"][vscidx[vsc_is], VA]
+            q_vsc = ppc["vsc"][:, VSC_Q]
+            net["res_vsc"].loc[:, "q_mvar"] = q_vsc  # write all because of zeros
+            q = np.hstack([q, q_vsc])
+        b = np.hstack([b, vsc["bus"].values])
+
     if not ac:
         q = np.zeros(len(p))
-    b_pp, vp, vq = _sum_by_group(b.astype(int), p, q)
+    b_pp, vp, vq = _sum_by_group(b.astype(np.int64), p, q)
     b_ppc = bus_lookup_aranged[b_pp]
 
     bus_pq[b_ppc, 0] += vp
