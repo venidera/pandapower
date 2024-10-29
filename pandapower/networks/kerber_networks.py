@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2016-2020 by University of Kassel and Fraunhofer Institute for Energy Economics
+# Copyright (c) 2016-2024 by University of Kassel and Fraunhofer Institute for Energy Economics
 # and Energy System Technology (IEE), Kassel. All rights reserved.
 
 
@@ -309,5 +309,4 @@ def create_kerber_vorstadtnetz_kabel_2(std_type="NAYY 4x185", p_load_mw=.002, q_
                                             std_type_branchout_line_2="NYY 4x35",
                                             prob_branchout_line_1=0.5)
     return pd_net
-
 
