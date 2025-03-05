@@ -292,7 +292,7 @@ class CimConverter:
         eqssh_eni = pd.merge(eqssh_eni, self.net.bus[[sc['o_id'], 'zone']].rename({sc['o_id']: 'b_id'}, axis=1),
                              how='left', left_on='ConnectivityNode', right_on='b_id')
 
-        eqssh_eni['referencePriority'].loc[eqssh_eni['referencePriority'] == 0] = np.NaN
+        eqssh_eni['referencePriority'].loc[eqssh_eni['referencePriority'] == 0] = np.nan
         eqssh_eni['p'] = -eqssh_eni['p']
         eqssh_eni['q'] = -eqssh_eni['q']
         eqssh_eni['x0x_max'] = ((eqssh_eni['maxR1ToX1Ratio'] + 1j) /
@@ -1131,7 +1131,7 @@ class CimConverter:
 
     def _create_trafo_characteristics(self, trafo_type, trafo_df_origin):
         if 'id_characteristic' not in trafo_df_origin.columns:
-            trafo_df_origin['id_characteristic'] = np.NaN
+            trafo_df_origin['id_characteristic'] = np.nan
         if 'characteristic_temp' not in self.net.keys():
             self.net['characteristic_temp'] = pd.DataFrame(columns=['id_characteristic', 'step', 'vk_percent',
                                                                     'vkr_percent', 'vkr_hv_percent', 'vkr_mv_percent',

@@ -264,9 +264,6 @@ def ppc_to_pm(net, ppci):
     shunt_idx = 1
     # PowerModels has a load model -> add loads and sgens to pm["load"]
 
-    # baseMVA for transforming power quantities to p.u. (required by P.M.)
-    sn_mva = net.sn_mva
-
     # temp dicts which hold the sum of p, q of loads + sgens
     pd_bus = dict()
     qd_bus = dict()
@@ -295,7 +292,6 @@ def ppc_to_pm(net, ppci):
         bus["va"] = row[VA]
         bus["vm"] = row[VM]
         bus["base_kv"] = row[BASE_KV]
-
 
         pd_value = row[PD] # / sn_mva  # testar
         qd_value = row[QD] # / sn_mva  # testar
@@ -357,6 +353,7 @@ def ppc_to_pm(net, ppci):
         branch["tap"] = row[TAP].real
         branch["shift"] = math.radians(row[SHIFT].real)
         pm["branch"][str(idx)] = branch
+
     #### create pm["gen"]
     gen_idxs_pm = [str(i+1) for i in range(len(ppci["gen"]))]
     gen_df = pd.DataFrame(index=gen_idxs_pm)
@@ -547,7 +544,7 @@ def add_params_to_pm(net, pm):
                         side_bus_t = "hv_bus" if side == "lv" else "lv_bus" 
                     pd_idx = pm["user_defined_params"]["side"][k]["element_pp_index"]
                     ppcidx = net._pd2pm_lookups["branch"][elm][0]-1+pd_idx   
-
+                    
                     if side in ["from", "hv"]:
                         ppcrow_f = 0
                         ppcrow_t = 1
@@ -575,7 +572,7 @@ def add_params_to_pm(net, pm):
                     dic[str(k)] = k
         if dic != {}:
             pm["user_defined_params"]["gen_and_controllable_sgen"] = dic
-
+    
     # add objective factors for multi optimization
     if "obj_factors" in net.keys():
         assert type(net.obj_factors) == list
@@ -593,6 +590,7 @@ def add_time_series_to_pm(net, pm, from_time_step, to_time_step):
     if from_time_step is None or to_time_step is None:
         raise ValueError("please define 'from_time_step' " +
                          "and 'to_time_step' to call time-series optimizaiton ")
+    tp_list = list(range(from_time_step, to_time_step))
     if len(net.controller):
         load_dict, gen_dict = {}, {}
         pm["time_series"] = {"load": load_dict, "gen": gen_dict,
@@ -629,5 +627,3 @@ def allow_multi_ext_grids(net, pm, ext_grids=None):
     for b in target_pm_buses:
         pm["bus"][str(b)]["bus_type"] = 3
     return pm
-    
-   
