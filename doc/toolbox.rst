@@ -21,10 +21,6 @@ General Issues
 
 .. autofunction:: pandapower.pp_elements
 
-.. autofunction:: pandapower.branch_element_bus_dict
-
-.. autofunction:: pandapower.signing_system_value
-
 .. autofunction:: pandapower.pq_from_cosphi
 
 .. autofunction:: pandapower.cosphi_from_pq
@@ -51,7 +47,7 @@ Result Information
 
 .. autofunction:: pandapower.nets_equal
 
-.. autofunction:: pandapower.clear_result_tables
+.. autofunction:: pandapower.clear_result_table
 
 ====================================
 Simulation Setup and Preparation
@@ -73,7 +69,7 @@ Simulation Setup and Preparation
 
 .. autofunction:: pandapower.set_scaling_by_type
 
-#.. autofunction:: pandapower.convert_format
+.. autofunction:: pandapower.convert_format
 
 .. autofunction:: pandapower.set_data_type_of_columns_to_default
 
@@ -95,21 +91,11 @@ Topology Modification
 
 .. autofunction:: pandapower.drop_lines
 
-.. autofunction:: pandapower.drop_measurements_at_elements
-
 .. autofunction:: pandapower.drop_duplicated_measurements
-
-.. autofunction:: pandapower.get_connecting_branches
-
-.. autofunction:: pandapower.get_inner_branches
-
-.. autofunction:: pandapower.drop_inner_branches
 
 .. autofunction:: pandapower.set_element_status
 
 .. autofunction:: pandapower.set_isolated_areas_out_of_service
-
-.. autofunction:: pandapower.drop_elements_simple
 
 .. autofunction:: pandapower.drop_out_of_service_elements
 
@@ -118,12 +104,6 @@ Topology Modification
 .. autofunction:: pandapower.select_subnet
 
 .. autofunction:: pandapower.merge_nets
-
-.. autofunction:: pandapower.repl_to_line
-
-.. autofunction:: pandapower.merge_parallel_line
-
-.. autofunction:: pandapower.merge_same_bus_generation_plants
 
 .. autofunction:: pandapower.create_replacement_switch_for_branch
 
@@ -140,8 +120,6 @@ Topology Modification
 .. autofunction:: pandapower.replace_gen_by_sgen
 
 .. autofunction:: pandapower.replace_sgen_by_gen
-
-.. autofunction:: pandapower.replace_pq_elmtype
 
 .. autofunction:: pandapower.replace_ward_by_internal_elements
 

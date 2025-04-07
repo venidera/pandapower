@@ -106,8 +106,8 @@ def fdpf(Ybus, Sbus, V0, Bp, Bpp, ref, pv, pq, ppopt=None):
         if normP < tol and normQ < tol:
             converged = 1
             if verbose:
-                sys.stdout.write('\nFast-decoupled power flow converged in %d '
-                    'P-iterations and %d Q-iterations.\n' % (i, i - 1))
+                sys.stdout.write(f'\nFast-decoupled power flow converged in {i} '
+                    'P-iterations and {i-1} Q-iterations.\n')
             break
 
         ##-----  do Q iteration, update Vm  -----
@@ -130,13 +130,13 @@ def fdpf(Ybus, Sbus, V0, Bp, Bpp, ref, pv, pq, ppopt=None):
         if normP < tol and normQ < tol:
             converged = 1
             if verbose:
-                sys.stdout.write('\nFast-decoupled power flow converged in %d '
-                    'P-iterations and %d Q-iterations.\n' % (i, i))
+                sys.stdout.write(f'\nFast-decoupled power flow converged in {i} '
+                    'P-iterations and {i} Q-iterations.\n')
             break
 
     if verbose:
         if not converged:
             sys.stdout.write('\nFast-decoupled power flow did not converge in '
-                             '%d iterations.' % i)
+                             f'{i} iterations.')
 
     return V, converged, i

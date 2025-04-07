@@ -1,5 +1,4 @@
 .. _sc_elements:
-
 ==================
 Network Elements
 ==================

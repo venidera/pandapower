@@ -643,8 +643,8 @@ def printpf(baseMVA, bus=None, gen=None, branch=None, f=None, success=None,
             Ft = branch[:, PT]
             strg = '\n  #     Bus    Pf  mu     Pf      |Pmax|      Pt      Pt  mu   Bus'
         elif ppopt['OPF_FLOW_LIM'] == 2:   ## |I| limit
-            Ff = abs( (branch[:, PF] + 1j * branch[:, QF]) / V[e2i[branch[:, F_BUS].real.astype(int)]] )
-            Ft = abs( (branch[:, PT] + 1j * branch[:, QT]) / V[e2i[branch[:, T_BUS].real.astype(int)]] )
+            Ff = abs( (branch[:, PF] + 1j * branch[:, QF]) / V[e2i[branch[:, F_BUS].astype(int)]] )
+            Ft = abs( (branch[:, PT] + 1j * branch[:, QT]) / V[e2i[branch[:, T_BUS].astype(int)]] )
             strg = '\n  #     Bus   |If| mu    |If|     |Imax|     |It|    |It| mu   Bus'
         else:                ## |S| limit
             Ff = abs(branch[:, PF] + 1j * branch[:, QF])
@@ -667,18 +667,19 @@ def printpf(baseMVA, bus=None, gen=None, branch=None, f=None, success=None,
                        (((branch[i, RATE_A] != 0) & (abs(Ff[i]) > branch[i, RATE_A] - ctol)) |
                         ((branch[i, RATE_A] != 0) & (abs(Ft[i]) > branch[i, RATE_A] - ctol)) |
                         (branch[i, MU_SF] > ptol) | (branch[i, MU_ST] > ptol))):
-                    fd.write('\n%4d%7d' % (i, branch[i, F_BUS].real))
+                    fd.write('\n%4d%7d' % (i, branch[i, F_BUS]))
                     if (Ff[i] > branch[i, RATE_A] - ctol) | (branch[i, MU_SF] > ptol):
-                        fd.write('%10.3f' % branch[i, MU_SF].real)
+                        fd.write('%10.3f' % branch[i, MU_SF])
                     else:
                         fd.write('      -   ')
 
-                    fd.write('%9.2f%10.2f%10.2f' % (Ff[i], branch[i, RATE_A].real, Ft[i]))
+                    fd.write('%9.2f%10.2f%10.2f' %
+                        (Ff[i], branch[i, RATE_A], Ft[i]))
                     if (Ft[i] > branch[i, RATE_A] - ctol) | (branch[i, MU_ST] > ptol):
-                        fd.write('%10.3f' % branch[i, MU_ST].real)
+                        fd.write('%10.3f' % branch[i, MU_ST])
                     else:
                         fd.write('      -   ')
-                    fd.write('%6d' % branch[i, T_BUS].real)
+                    fd.write('%6d' % branch[i, T_BUS])
             fd.write('\n')
 
     ## execute userfcn callbacks for 'printpf' stage

@@ -51,7 +51,6 @@ Loads are modelled as PQ-buses in the power flow calculation.
 	:width: 40em
 	:alt: alternate Text
 	:align: center
-
 *Delta Load*
 
 .. image:: asym_del_load.png

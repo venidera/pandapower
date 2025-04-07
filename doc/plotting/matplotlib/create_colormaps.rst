@@ -4,12 +4,12 @@ Create Colormaps
 
 Discrete
 ==============================
-.. autofunction:: pandapower.plotting.colormaps.cmap_discrete
+.. autofunction:: pandapower.plotting.cmap_discrete
 
 Continuous
 ==============================
-.. autofunction:: pandapower.plotting.colormaps.cmap_continuous
+.. autofunction:: pandapower.plotting.cmap_continuous
 
 Logarithmic
 ==============================
-.. autofunction:: pandapower.plotting.colormaps.cmap_logarithmic
+.. autofunction:: pandapower.plotting.cmap_logarithmic

@@ -4,7 +4,7 @@ import pytest
 import pandapower as pp
 from pandapower.opf.validate_opf_input import _check_necessary_opf_parameters
 try:
-    import pandaplan.core.pplog as logging
+    import pplog as logging
 except ImportError:
     import logging
 

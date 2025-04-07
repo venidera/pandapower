@@ -24,8 +24,8 @@ of low voltage networks, exemplary results and a method for the generation of re
 
 .. seealso::
 
-	- Georg Kerber, `Aufnahmefähigkeit von Niederspannungsverteilnetzen für die Einspeisung aus Photovoltaikkleinanlagen <https://mediatum.ub.tum.de/doc/998003/998003.pdf>`__, Dissertation
-	- Georg Kerber, `Statistische Analyse von NS-Verteilungsnetzen und Modellierung von Referenznetzen <https://mediatum.ub.tum.de/doc/681082/681082.pdf>`__
+	- Georg Kerber, `Aufnahmefähigkeit von Niederspannungsverteilnetzen für die Einspeisung aus Photovoltaikkleinanlagen <https://mediatum.ub.tum.de/doc/998003/998003.pdf>`_, Dissertation
+	- Georg Kerber, `Statistische Analyse von NS-Verteilungsnetzen und Modellierung von Referenznetzen <https://mediatum.ub.tum.de/doc/681082/681082.pdf>`_
 
 
 
