@@ -288,9 +288,9 @@ def _preserve_dtypes(df, dtypes):
     for item, dtype in list(dtypes.items()):
         if df.dtypes.at[item] != dtype:
             if (dtype == bool or dtype == np.bool_) and np.any(df[item].isnull()):
-                raise UserWarning(f"Encountered NaN value(s) in a boolean column {item}! "
-                                  f"NaN are casted to True by default, which can lead to errors. "
-                                  f"Replace NaN values with True or False first.")
+                raise UserWarning(f"Encountered nan value(s) in a boolean column {item}! "
+                                  f"nan are casted to True by default, which can lead to errors. "
+                                  f"Replace nan values with True or False first.")
             try:
                 df[item] = df[item].astype(dtype)
             except ValueError:
@@ -1020,6 +1020,7 @@ def _add_auxiliary_elements(net):
 
 
 def _add_dcline_gens(net):
+    # TESTAR
     from pandapower.create import create_gen
     for dctab in net.dcline.itertuples():
         pfrom = dctab.p_mw

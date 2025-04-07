@@ -125,7 +125,7 @@ def _build_pp_ext_grid(net, ppc, f, t):
 
         if "controllable" in net["ext_grid"]:
             # if we do and one of them is false, do this only for the ones, where it is false
-            eg_constrained = net.ext_grid[eg_is][~net.ext_grid.controllable]
+            eg_constrained = net.ext_grid[eg_is][net.ext_grid.controllable==False]
             if len(eg_constrained):
                 eg_constrained_bus_ppc = [bus_lookup[egb] for egb in eg_constrained.bus.values]
                 ppc["bus"][eg_constrained_bus_ppc, VMAX] = net["ext_grid"]["vm_pu"].values[eg_constrained.index] + delta

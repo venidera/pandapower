@@ -6,6 +6,7 @@
 """Solves the power flow using a fast decoupled method.
 """
 
+import sys
 
 from numpy import array, angle, exp, linalg, conj, r_, inf, column_stack, real
 from scipy.sparse.linalg import splu
@@ -43,6 +44,7 @@ def decoupledpf(Ybus, Sbus, V0, pv, pq, ppci, options):
     # options
     tol = options["tolerance_mva"]
     max_it = options["max_iteration"]
+    verbose = 2
     # No use currently for numba. TODO: Check if can be applied in Bp and Bpp
     # numba = options["numba"]
 
@@ -59,9 +61,9 @@ def decoupledpf(Ybus, Sbus, V0, pv, pq, ppci, options):
 
     # initialize
     i = 0
-    V = V0
-    Va = angle(V)
-    Vm = abs(V)
+    V = V0  # state variable
+    Va = angle(V)  # vector of voltage angles
+    Vm = abs(V)  # vector of voltage magnitudes
     dVa, dVm = None, None
 
     if v_debug:
@@ -71,14 +73,14 @@ def decoupledpf(Ybus, Sbus, V0, pv, pq, ppci, options):
         Vm_it = None
         Va_it = None
 
-    # set up indexing for updating V
+    ## set up indexing for updating V
     pvpq = r_[pv, pq]
 
-    # evaluate initial mismatch
+    ## evaluate initial mismatch
     P, Q = _evaluate_mis(Ybus, V, Sbus, pvpq, pq, Vm)
 
     # check tolerance
-    converged = _check_for_convergence(P, Q, tol)
+    converged = _check_for_convergence(P, Q, tol, i, verbose)
 
     # create and reduce B matrices
     Bp, Bpp = makeB(baseMVA, bus, real(branch), algorithm)
@@ -86,34 +88,34 @@ def decoupledpf(Ybus, Sbus, V0, pv, pq, ppci, options):
     Bp = Bp[array([pvpq]).T, pvpq].tocsc()
     Bpp = Bpp[array([pq]).T, pq].tocsc()
 
-    # factor B matrices
+    ## factor B matrices
     Bp_solver = splu(Bp)
     Bpp_solver = splu(Bpp)
 
-    # do P and Q iterations
+    ## do P and Q iterations
     while (not converged and i < max_it):
-        # update iteration counter
+        ## update iteration counter
         i = i + 1
 
-        # -----  do P iteration, update Va  -----
+        ##-----  do P iteration, update Va  -----
         dVa = -Bp_solver.solve(P)
 
-        # update voltage
+        ## update voltage
         Va[pvpq] = Va[pvpq] + dVa
         V = Vm * exp(1j * Va)
 
-        # evalute mismatch
+        ## evalute mismatch
         P, Q = _evaluate_mis(Ybus, V, Sbus, pvpq, pq, Vm)
 
-        # check tolerance
-        if _check_for_convergence(P, Q, tol):
+        ## check tolerance
+        if _check_for_convergence(P, Q, tol, i, verbose):
             converged = True
             break
 
-        # -----  do Q iteration, update Vm  -----
+        ##-----  do Q iteration, update Vm  -----
         dVm = -Bpp_solver.solve(Q)
 
-        # update voltage
+        ## update voltage
         Vm[pq] = Vm[pq] + dVm
         V = Vm * exp(1j * Va)
 
@@ -124,13 +126,18 @@ def decoupledpf(Ybus, Sbus, V0, pv, pq, ppci, options):
         if voltage_depend_loads:
             Sbus = makeSbus(baseMVA, bus, gen, vm=Vm)
 
-        # evalute mismatch
+        ## evalute mismatch
         P, Q = _evaluate_mis(Ybus, V, Sbus, pvpq, pq, Vm)
 
         # check tolerance
-        if _check_for_convergence(P, Q, tol):
+        if _check_for_convergence(P, Q, tol, i, verbose):
             converged = True
             break
+
+    if verbose:
+        if not converged:
+            sys.stdout.write('\nFast-decoupled power flow did not converge in '
+                             '%d iterations.' % i)
 
     # the newtonpf/newtonpf funtion returns J. We are returning Bp and Bpp
     return V, converged, i, Bp, Bpp, Vm_it, Va_it
@@ -145,8 +152,19 @@ def _evaluate_mis(Ybus, V, Sbus, pvpq, pq, Vm):
     return mis_p, mis_q
 
 
-def _check_for_convergence(mis_p, mis_q, tol):
+def _check_for_convergence(mis_p, mis_q, tol, i, verbose=False):
     # calc infinity norm
-    return (
-        (linalg.norm(mis_p, inf) < tol) and (linalg.norm(mis_q, inf) < tol)
-    ) 
+
+    ## check tolerance
+    normP = linalg.norm(mis_p, inf)
+    normQ = linalg.norm(mis_q, inf)
+    if verbose > 1:
+        sys.stdout.write('\niteration     max mismatch (p.u.)  ')
+        sys.stdout.write('\ntype   #        P            Q     ')
+        sys.stdout.write('\n---- ----  -----------  -----------')
+        sys.stdout.write('\n  -  %3d   %10.3e   %10.3e' % (i, normP, normQ))
+    if normP < tol and normQ < tol:
+        sys.stdout.write('\nConverged!\n')
+        return True
+    else:
+        return False
