@@ -1010,7 +1010,8 @@ def draw_traces(traces, on_map=False, map_style='basic', showlegend=True, figsiz
     # setting Figure object
     fig = Figure(data=traces,  # edge_trace
                  layout=Layout(
-                     titlefont=dict(size=16),
+                     # verificar
+                     title_font=dict(size=16),
                      showlegend=showlegend,
                      autosize=(aspectratio == 'auto'),
                      hovermode='closest',
